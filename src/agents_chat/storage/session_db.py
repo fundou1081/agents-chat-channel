@@ -38,6 +38,15 @@ class SessionDB:
         self.db_path = str(db_path)
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._initialized = False
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                pass
+            else:
+                loop.run_until_complete(self._ensure_schema())
+        except RuntimeError:
+            pass
 
     async def _ensure_schema(self):
         if self._initialized:

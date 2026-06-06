@@ -40,6 +40,14 @@ class SendRequest(BaseModel):
 def create_app(registry: HeartbeatRegistry) -> FastAPI:
     app = FastAPI(title="agents-chat-channel")
 
+    @app.on_event("startup")
+    async def _init_storage():
+        # 确保 schema 存在
+        for a in registry.authors.values():
+            # 第一次查询会触发表创建
+            await a.mailbox.fetch_unread("__init__", since=None, limit=1)
+            await a.sessions_db.list_all("__init__")
+
     @app.get("/")
     async def index():
         index_path = UI_DIR / "index.html"

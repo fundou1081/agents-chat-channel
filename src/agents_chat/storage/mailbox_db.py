@@ -54,6 +54,19 @@ class MailboxDB:
         self.db_path = str(db_path)
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._initialized = False
+        # 提前初始化 schema (避免第一次查询时表不存在)
+        # 使用 anyio/thread 简单同步启动
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # 在运行的 loop 里,延迟到首次查询
+                pass
+            else:
+                loop.run_until_complete(self._ensure_schema())
+        except RuntimeError:
+            # 没有 event loop, 跳过 (后续首次查询时会创建)
+            pass
 
     async def _ensure_schema(self):
         if self._initialized:
