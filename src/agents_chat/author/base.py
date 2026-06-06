@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from ..llm.mock import MockLLM
+from ..monitor import Monitor
 from ..models import (
     AuthorStatus,
     Decision,
@@ -27,6 +28,7 @@ from ..models import (
     SessionContext,
     TickContext,
 )
+from ..policy import NetworkPolicy, RateLimiter
 from ..storage.mailbox_db import MailboxDB
 from ..storage.session_db import SessionDB
 from .think import decide
@@ -59,6 +61,9 @@ class Author:
         llm: MockLLM,
         data_dir: str | Path | None = None,
         registry: "HeartbeatRegistry | None" = None,
+        monitor: Monitor | None = None,
+        rate_limiter: RateLimiter | None = None,
+        policy: NetworkPolicy | None = None,
     ):
         self.persona = persona
         self.mailbox = mailbox
@@ -67,6 +72,12 @@ class Author:
         self.data_dir = Path(data_dir) if data_dir else Path("./data")
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.registry = registry  # 用来 burst 其他 author
+        self.monitor = monitor  # 事件监控 (可选)
+        self.rate_limiter = rate_limiter  # 流量控制 (可选)
+        self.policy = policy or NetworkPolicy()  # 网络 policy
+
+        # 跟踪 last tick 时间 (用于 cooldown)
+        self._last_tick_at: datetime | None = None
 
         # 状态
         self.status: AuthorStatus = "idle"
@@ -147,6 +158,14 @@ class Author:
                     print(f"[{self.persona.id}] ⚡ burst tick")
                 except asyncio.TimeoutError:
                     pass
+            # Cooldown 检查 (强制间隔, 防模型卡顿重试)
+            if self._last_tick_at:
+                elapsed = (datetime.now() - self._last_tick_at).total_seconds()
+                if elapsed < self.policy.min_tick_interval_seconds:
+                    wait_more = self.policy.min_tick_interval_seconds - elapsed
+                    print(f"[{self.persona.id}] ⏸ cooldown {wait_more:.1f}s")
+                    await asyncio.sleep(wait_more)
+            self._last_tick_at = datetime.now()
             # 跑一次 tick
             try:
                 print(f"[{self.persona.id}] ▶ tick #{self.total_ticks + 1}")
@@ -187,6 +206,11 @@ class Author:
             active_sessions=list(self.sessions.values()),
             recent_own_activities=[a.get("summary", "") for a in self.activity_log[-20:]],
         )
+
+        # 4.5 Monitor: 记录收邮件
+        if self.monitor:
+            for m in new_mail:
+                self.monitor.mail_received(m, by_author=self.persona.id)
 
         # 5. LLM 决策
         if not new_mail and not self.sessions:
@@ -251,8 +275,12 @@ class Author:
 
     async def _execute(self, decision: Decision, new_mail: list[Mail]):
         """执行 LLM 决策。"""
-        # 发邮件
+        # 发邮件 (受 max_actions_per_tick + rate_limit 限制)
+        actions_this_tick = 0
         for m in decision.outgoing_mail:
+            if actions_this_tick >= self.policy.max_actions_per_tick:
+                print(f"  [{self.persona.id}] ⚠ max_actions_per_tick 限额 ({self.policy.max_actions_per_tick}), 跳过剩余邮件")
+                break
             # 强制 sender 是自己
             object.__setattr__(m, 'sender', self.persona.id)
             # 验证 + 重路由 recipients
@@ -261,7 +289,23 @@ class Author:
             if not resolved_recipients:
                 print(f"  [{self.persona.id}] ⚠ mail dropped, no valid recipients: {m.subject[:40]}")
                 continue
+            # Rate limit 检查
+            if self.rate_limiter:
+                ok, reason = self.rate_limiter.check(
+                    self.persona.id,
+                    self.policy.max_mails_per_hour,
+                    self.policy.max_mails_per_day,
+                )
+                if not ok:
+                    print(f"  [{self.persona.id}] ⚠ rate limited: {reason}, 跳过")
+                    continue
             await self.mailbox.deliver(m)
+            # 计数
+            if self.rate_limiter:
+                self.rate_limiter.increment(self.persona.id)
+            # Monitor 记录
+            if self.monitor:
+                self.monitor.mail_sent(m, by_author=self.persona.id)
             # Burst 给收件人
             for r in resolved_recipients:
                 if r != self.persona.id and self.registry:
@@ -269,6 +313,7 @@ class Author:
                     if other:
                         other.trigger_immediate_tick()
             self.total_actions += 1
+            actions_this_tick += 1
             print(f"  [{self.persona.id}] → mail to {resolved_recipients}: {m.subject[:40]}")
 
         # 关闭 sessions
@@ -276,6 +321,9 @@ class Author:
             if sid in self.sessions:
                 self.sessions[sid].status = "completed"
                 await self.sessions_db.upsert(self.persona.id, self.sessions[sid])
+                # Monitor 记录
+                if self.monitor:
+                    self.monitor.session_completed(self.persona.id, sid)
                 # 不立刻删,保留记录
                 print(f"  [{self.persona.id}] ✓ session completed: {sid}")
 
@@ -287,6 +335,11 @@ class Author:
                     "summary": f"tool call: {action.payload}",
                     "kind": "tool",
                 })
+                # Monitor 记录
+                if self.monitor:
+                    tool_name = action.payload.get("tool", "?") if isinstance(action.payload, dict) else "?"
+                    tool_input = str(action.payload)[:200] if action.payload else ""
+                    self.monitor.tool_used(self.persona.id, tool_name, tool_input)
                 self.total_actions += 1
                 print(f"  [{self.persona.id}] 🔧 tool: {action.payload}")
 

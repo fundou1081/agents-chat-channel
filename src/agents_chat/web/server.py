@@ -116,6 +116,53 @@ def create_app(registry: HeartbeatRegistry) -> FastAPI:
         import json as _json
         return [_json.loads(l) for l in lines if l.strip()]
 
+    @app.get("/api/conversations")
+    async def get_conversations(limit: int = 100) -> dict:
+        """Agent↔Agent 对话监控 (filter out god / external).
+
+        返回:
+        - events: list of {kind, actor, mail_from, mail_to, subject, body, ts, thread_id}
+        - stats: {by_kind, by_actor, total, agent_only}
+        """
+        from ..main import get_monitor
+        monitor = get_monitor()
+        events = monitor.read_conversations(limit=limit)
+        stats = monitor.stats()
+        return {
+            "events": events,
+            "stats": stats,
+        }
+
+    @app.get("/api/policy")
+    async def get_policy_info() -> dict:
+        """返回当前 policy + rate limit 状态."""
+        from ..main import get_rate_limiter, get_policy
+        policy = get_policy()
+        rl = get_rate_limiter()
+        # 当前各 author 计数
+        counts = {}
+        for a in registry.authors.values():
+            pid = a.persona.id
+            counts[pid] = {
+                "hour": rl.get_count(pid, "hour"),
+                "day": rl.get_count(pid, "day"),
+                "max_per_hour": policy.max_mails_per_hour,
+                "max_per_day": policy.max_mails_per_day,
+            }
+        return {
+            "policy": policy.to_dict(),
+            "counts": counts,
+            "free_chat": registry.free_chat_status(),
+        }
+
+    @app.post("/api/freechat")
+    async def trigger_freechat(body: dict) -> dict:
+        """触发一次 free chat: 发话题到所有 author, burst 全部."""
+        topic = body.get("topic", "团队讨论")
+        started_by = body.get("started_by", "god")
+        sess = registry.start_free_chat(topic, started_by=started_by)
+        return {"ok": True, "session": sess}
+
     @app.post("/api/send")
     async def send_mail(req: SendRequest) -> dict:
         author = registry.get(req.to)

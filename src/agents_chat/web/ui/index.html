@@ -17,6 +17,26 @@ h1 { margin: 0 0 8px; font-size: 24px; }
 h2 { font-size: 18px; margin: 24px 0 12px; }
 .subtitle { color: #7d8590; font-size: 13px; margin-bottom: 24px; }
 
+.tabs {
+  display: flex;
+  border-bottom: 1px solid #30363d;
+  margin-bottom: 16px;
+}
+.tab {
+  padding: 8px 16px;
+  cursor: pointer;
+  color: #7d8590;
+  border-bottom: 2px solid transparent;
+  user-select: none;
+}
+.tab.active {
+  color: #fff;
+  border-bottom-color: #58a6ff;
+}
+.tab:hover { color: #e6edf3; }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
 .row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
 @media (max-width: 1000px) { .row { grid-template-columns: 1fr; } }
 
@@ -76,10 +96,7 @@ h2 { font-size: 18px; margin: 24px 0 12px; }
 }
 .metric span:last-child { color: #e6edf3; font-weight: 600; }
 
-.sessions {
-  margin-top: 12px;
-  font-size: 12px;
-}
+.sessions { margin-top: 12px; font-size: 12px; }
 .session {
   background: #0d1117;
   border-left: 3px solid #30363d;
@@ -94,24 +111,39 @@ h2 { font-size: 18px; margin: 24px 0 12px; }
 .session .topic { font-weight: 600; color: #e6edf3; }
 .session .meta { color: #7d8590; font-size: 11px; }
 
-.mailbox {
+.mailbox, .conversations {
   background: #0d1117;
   border: 1px solid #30363d;
   border-radius: 6px;
   padding: 12px;
-  max-height: 400px;
+  max-height: 600px;
   overflow-y: auto;
 }
-.mail {
+.mail, .conv {
   padding: 8px 0;
   border-bottom: 1px solid #21262d;
   font-size: 12px;
 }
-.mail:last-child { border-bottom: none; }
-.mail .from { color: #58a6ff; font-weight: 600; }
-.mail .subject { color: #e6edf3; margin: 2px 0; }
-.mail .body { color: #7d8590; }
-.mail .time { color: #6e7681; font-size: 10px; }
+.mail:last-child, .conv:last-child { border-bottom: none; }
+.mail .from, .conv .from { color: #58a6ff; font-weight: 600; }
+.mail .subject, .conv .subject { color: #e6edf3; margin: 2px 0; }
+.mail .body, .conv .body { color: #7d8590; }
+.mail .time, .conv .time { color: #6e7681; font-size: 10px; }
+.conv .kind {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  margin-right: 6px;
+  text-transform: uppercase;
+}
+.conv .kind-mail_sent { background: #23863633; color: #3fb950; }
+.conv .kind-mail_received { background: #1f6feb33; color: #58a6ff; }
+.conv .kind-session_started { background: #d2992233; color: #d29922; }
+.conv .kind-session_completed { background: #6e768133; color: #7d8590; }
+.conv .kind-tool_used { background: #db61a233; color: #db61a2; }
+.conv .actor { color: #db61a2; font-weight: 600; }
 
 .send-form {
   background: #161b22;
@@ -155,34 +187,100 @@ h2 { font-size: 18px; margin: 24px 0 12px; }
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
 }
+
+.stats-bar {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+.stat {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 4px 10px;
+}
+.stat .label { color: #7d8590; }
+.stat .value { color: #fff; font-weight: 600; }
 </style>
 </head>
 <body>
 <h1>🤖 agents-chat-channel</h1>
 <div class="subtitle">Multi-author agent runtime · Email-model · Self-heartbeat · Live view</div>
 
-<h2>📤 上帝发邮件 (Send Mail as God)</h2>
-<div class="send-form">
-  <input id="send-to" placeholder="to (e.g. pm, zhang-frontend, li-backend)">
-  <input id="send-subject" placeholder="subject">
-  <textarea id="send-body" placeholder="body" rows="3"></textarea>
-  <button onclick="sendMail()">📨 Send</button>
-  <span id="send-status" style="margin-left:12px;font-size:12px;color:#7d8590;"></span>
+<div class="tabs">
+  <div class="tab active" data-tab="dashboard">Dashboard</div>
+  <div class="tab" data-tab="conversations">💬 Conversations <span class="dot"></span></div>
+  <div class="tab" data-tab="mailbox">📬 Mailbox</div>
 </div>
 
-<h2>👥 Authors <span class="dot"></span> <span style="font-size:12px;color:#7d8590;">(auto-refresh 3s)</span></h2>
-<div id="authors" class="row"></div>
+<!-- Tab: Dashboard -->
+<div class="tab-content active" data-tab="dashboard">
+  <h2>📤 上帝发邮件</h2>
+  <div class="send-form">
+    <input id="send-to" placeholder="to (e.g. pm, zhang-frontend, li-backend)">
+    <input id="send-subject" placeholder="subject">
+    <textarea id="send-body" placeholder="body" rows="3"></textarea>
+    <button onclick="sendMail()">📨 Send</button>
+    <span id="send-status" style="margin-left:12px;font-size:12px;color:#7d8590;"></span>
+  </div>
 
-<h2>📬 Mailbox (latest 30)</h2>
-<div id="mailbox" class="mailbox"></div>
+  <h2>👥 Authors <span class="dot"></span> <span style="font-size:12px;color:#7d8590;">(auto-refresh 3s)</span></h2>
+  <div id="authors" class="row"></div>
+</div>
+
+<!-- Tab: Conversations (monitor) -->
+<div class="tab-content" data-tab="conversations">
+  <h2>💬 Agent ↔ Agent 对话监控 <span class="dot"></span> <span style="font-size:12px;color:#7d8590;">(auto-refresh 2s, 过滤掉 god/外部)</span></h2>
+
+  <div class="send-form" style="margin-bottom:16px;">
+    <h3 style="margin:0 0 8px;font-size:14px;">🎙️ 触发自由聊天 (Free Chat)</h3>
+    <input id="fc-topic" placeholder="话题 (e.g. '本周技术选型讨论', '架构 review')" value="技术讨论">
+    <button onclick="triggerFreeChat()">📢 广播给所有 author</button>
+    <span id="fc-status" style="margin-left:12px;font-size:12px;color:#7d8590;"></span>
+    <div id="fc-active" style="margin-top:8px;font-size:12px;"></div>
+  </div>
+
+  <h3 style="margin:16px 0 8px;font-size:14px;">📊 Policy & Rate Limit</h3>
+  <div class="stats-bar" id="policy-stats"></div>
+
+  <h3 style="margin:16px 0 8px;font-size:14px;">💬 对话事件流</h3>
+  <div class="stats-bar" id="conv-stats"></div>
+
+  <div class="conversations" id="conversations">
+    <div style="color:#7d8590; padding:20px; text-align:center;">暂无对话。等作者之间发邮件...</div>
+  </div>
+</div>
+
+<!-- Tab: Mailbox (all mail) -->
+<div class="tab-content" data-tab="mailbox">
+  <h2>📬 Mailbox (all, 包含 god)</h2>
+  <div id="mailbox" class="mailbox"></div>
+</div>
 
 <script>
+// ========== Tab switching ==========
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    tab.classList.add('active');
+    document.querySelector(`.tab-content[data-tab="${tab.dataset.tab}"]`).classList.add('active');
+    refresh();
+  });
+});
+
+// ========== Data fetching ==========
 async function fetchJSON(url) {
   const r = await fetch(url);
   return r.json();
 }
 
 async function refresh() {
+  await Promise.all([refreshAuthors(), refreshMailbox(), refreshConversations()]);
+}
+
+async function refreshAuthors() {
   const authors = await fetchJSON('/api/authors');
   const div = document.getElementById('authors');
   div.innerHTML = authors.map(a => `
@@ -213,7 +311,9 @@ async function refresh() {
       </div>
     </div>
   `).join('');
+}
 
+async function refreshMailbox() {
   const mailbox = await fetchJSON('/api/mailbox?limit=30');
   const mb = document.getElementById('mailbox');
   mb.innerHTML = mailbox.map(m => `
@@ -224,6 +324,106 @@ async function refresh() {
       <div class="time">thread: ${m.thread_id} · ${m.read_at ? '✓ read' : '○ unread'}</div>
     </div>
   `).join('');
+}
+
+async function refreshConversations() {
+  const data = await fetchJSON('/api/conversations?limit=200');
+  const stats = data.stats || {};
+  const events = data.events || [];
+
+  // Policy + rate counts
+  const pol = await fetchJSON('/api/policy');
+  window.__rateCounts = pol.counts || {};
+  window.__maxPerHour = pol.policy?.max_mails_per_hour;
+  window.__maxPerDay = pol.policy?.max_mails_per_day;
+  const polEl = document.getElementById('policy-stats');
+  if (polEl && pol.policy) {
+    polEl.innerHTML = `
+      <div class="stat"><span class="label">max/hour</span> <span class="value">${pol.policy.max_mails_per_hour}</span></div>
+      <div class="stat"><span class="label">max/day</span> <span class="value">${pol.policy.max_mails_per_day}</span></div>
+      <div class="stat"><span class="label">max_actions/tick</span> <span class="value">${pol.policy.max_actions_per_tick}</span></div>
+      <div class="stat"><span class="label">min tick interval</span> <span class="value">${pol.policy.min_tick_interval_seconds}s</span></div>
+      <div class="stat"><span class="label">max thread rounds</span> <span class="value">${pol.policy.max_thread_rounds}</span></div>
+      ${Object.entries(pol.counts || {}).map(([pid, c]) => `
+        <div class="stat" style="border-color: ${c.hour >= pol.policy.max_mails_per_hour ? '#da3633' : '#30363d'}">
+          <span class="label">${pid}</span>
+          <span class="value" style="color: ${c.hour >= pol.policy.max_mails_per_hour ? '#f85149' : '#e6edf3'}">${c.hour}h / ${c.day}d</span>
+        </div>
+      `).join('')}
+    `;
+  }
+  // Free chat status
+  const fcEl = document.getElementById('fc-active');
+  if (fcEl && pol.free_chat?.active) {
+    const s = pol.free_chat.session;
+    fcEl.innerHTML = `<span style="color:#3fb950;">🟢 自由聊天进行中</span> | topic: <b>${s.topic}</b> | started by: ${s.started_by} | round: ${s.current_round}/${pol.policy.free_chat_max_rounds} | msgs: ${s.messages?.length || 0}`;
+  } else if (fcEl) {
+    fcEl.innerHTML = '<span style="color:#7d8590;">⚪ 无 active free chat</span>';
+  }
+
+  // Stats bar
+  const statsEl = document.getElementById('conv-stats');
+  const byKind = stats.by_kind || {};
+  const byActor = stats.by_actor || {};
+  statsEl.innerHTML = `
+    <div class="stat"><span class="label">agent events</span> <span class="value">${stats.agent_events || 0}</span></div>
+    <div class="stat"><span class="label">mails sent</span> <span class="value">${byKind.mail_sent || 0}</span></div>
+    <div class="stat"><span class="label">received</span> <span class="value">${byKind.mail_received || 0}</span></div>
+    <div class="stat"><span class="label">sessions</span> <span class="value">${(byKind.session_started || 0) + (byKind.session_completed || 0)}</span></div>
+    <div class="stat"><span class="label">tools used</span> <span class="value">${byKind.tool_used || 0}</span></div>
+    <div class="stat" style="margin-left:auto"><span class="label">活跃作者</span> <span class="value">${Object.keys(byActor).length}</span></div>
+  `;
+
+  // Conversations list (timeline)
+  const el = document.getElementById('conversations');
+  if (events.length === 0) {
+    el.innerHTML = '<div style="color:#7d8590; padding:20px; text-align:center;">暂无 agent↔agent 对话。等作者开始 tick...</div>';
+    return;
+  }
+
+  el.innerHTML = events.map(ev => {
+    const ts = ev.timestamp ? ev.timestamp.split('T')[1]?.slice(0, 12) : '';
+    const kind = ev.kind;
+    let body = '';
+    if (kind === 'mail_sent' || kind === 'mail_received') {
+      const from = ev.mail_from || ev.actor;
+      const to = (ev.mail_to || []).join(', ');
+      const arrow = kind === 'mail_sent' ? '→' : '←';
+      body = `
+        <div>
+          <span class="from">${from}</span> ${arrow} <span style="color:#7d8590;">${to}</span>
+          <span class="kind kind-${kind}">${kind.replace('_', ' ')}</span>
+        </div>
+        <div class="subject">${ev.mail_subject || '(无主题)'}</div>
+      `;
+    } else if (kind === 'session_completed') {
+      body = `<div><span class="kind kind-${kind}">session done</span> thread: <code>${ev.thread_id}</code></div>`;
+    } else if (kind === 'session_started') {
+      body = `<div><span class="kind kind-${kind}">new session</span> ${ev.session_topic || ''}</div>`;
+    } else if (kind === 'tool_used') {
+      body = `<div><span class="kind kind-${kind}">${ev.tool_name}</span> ${ev.tool_input || ''}</div>`;
+    }
+    return `
+      <div class="conv">
+        <div class="time">${ts}</div>
+        <div><span class="actor">${ev.actor}</span></div>
+        ${body}
+        <div class="time">thread: ${ev.thread_id || '-'}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function triggerFreeChat() {
+  const topic = document.getElementById('fc-topic').value || '团队讨论';
+  const r = await fetch('/api/freechat', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({topic, started_by: 'god'})
+  });
+  const j = await r.json();
+  document.getElementById('fc-status').textContent = '✓ triggered: ' + (j.session?.id || '');
+  setTimeout(refresh, 500);
 }
 
 async function sendMail() {
@@ -242,7 +442,9 @@ async function sendMail() {
 }
 
 refresh();
-setInterval(refresh, 3000);
+setInterval(refreshAuthors, 3000);
+setInterval(refreshMailbox, 5000);
+setInterval(refreshConversations, 2000);
 </script>
 </body>
 </html>

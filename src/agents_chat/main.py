@@ -18,6 +18,8 @@ from pathlib import Path
 from .author.base import Author
 from .heartbeat import HeartbeatRegistry
 from .models import Mail, Persona
+from .monitor import Monitor
+from .policy import FreeChatManager, NetworkPolicy, RateLimiter
 from .storage.mailbox_db import MailboxDB
 from .storage.session_db import SessionDB
 from .web.server import start_web_server
@@ -134,7 +136,25 @@ def get_sessions() -> SessionDB:
     return SessionDB(get_data_dir() / "sessions.db")
 
 
-def make_authors(persona_ids: list[str], llm=None, registry: "HeartbeatRegistry | None" = None) -> dict[str, Author]:
+def get_monitor() -> Monitor:
+    return Monitor(get_data_dir() / "logs" / "monitor.jsonl")
+
+
+def get_rate_limiter() -> RateLimiter:
+    return RateLimiter(get_data_dir() / "logs" / "rate_limits.db")
+
+
+def get_policy() -> NetworkPolicy:
+    return NetworkPolicy(
+        max_mails_per_hour=int(os.environ.get("AGENTCHAT_MAX_MAILS_PER_HOUR", "30")),
+        max_mails_per_day=int(os.environ.get("AGENTCHAT_MAX_MAILS_PER_DAY", "200")),
+        max_actions_per_tick=int(os.environ.get("AGENTCHAT_MAX_ACTIONS_PER_TICK", "3")),
+        max_thread_rounds=int(os.environ.get("AGENTCHAT_MAX_THREAD_ROUNDS", "8")),
+        min_tick_interval_seconds=int(os.environ.get("AGENTCHAT_MIN_TICK_INTERVAL", "3")),
+    )
+
+
+def make_authors(persona_ids: list[str], llm=None, registry: "HeartbeatRegistry | None" = None, monitor: "Monitor | None" = None, rate_limiter: "RateLimiter | None" = None, policy: "NetworkPolicy | None" = None) -> dict[str, Author]:
     """根据 persona id 创建 author。
 
     如果传了 llm, 所有 author 共享同一个 (override 默认).
@@ -142,6 +162,12 @@ def make_authors(persona_ids: list[str], llm=None, registry: "HeartbeatRegistry 
     """
     mailbox = get_mailbox()
     sessions = get_sessions()
+    if monitor is None:
+        monitor = get_monitor()
+    if rate_limiter is None:
+        rate_limiter = get_rate_limiter()
+    if policy is None:
+        policy = get_policy()
     authors = {}
     for pid in persona_ids:
         if pid not in BUILTIN_PERSONAS:
@@ -160,6 +186,9 @@ def make_authors(persona_ids: list[str], llm=None, registry: "HeartbeatRegistry 
             llm=author_llm,
             data_dir=get_data_dir() / "logs",
             registry=registry,
+            monitor=monitor,
+            rate_limiter=rate_limiter,
+            policy=policy,
         )
         authors[pid] = a
     return authors
@@ -235,8 +264,12 @@ async def cmd_demo(args):
     print()
 
     llm = None if args.llm == "auto" else _make_llm(args)
-    registry = HeartbeatRegistry()
-    authors = make_authors(["pm", "zhang", "li"], llm, registry=registry)
+    rate_limiter = get_rate_limiter()
+    policy = get_policy()
+    monitor = get_monitor()
+    registry = HeartbeatRegistry(policy=policy, rate_limiter=rate_limiter, monitor=monitor)
+    authors = make_authors(["pm", "zhang", "li"], llm, registry=registry,
+                            monitor=monitor, rate_limiter=rate_limiter, policy=policy)
     for a in authors.values():
         b = a.persona.llm_backend
         m = a.persona.llm_model or "(default)"
