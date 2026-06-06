@@ -1,7 +1,7 @@
 """Test mailbox deliver + fetch."""
 import pytest
-from agents_chat.models import Mail, MailPriority
-from agents_chat.storage.mailbox_db import MailboxDB
+from agents_chat.v1.models import Mail, MailPriority
+from agents_chat.v1.storage.mailbox_db import MailboxDB
 
 
 @pytest.mark.asyncio

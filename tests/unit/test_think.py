@@ -1,8 +1,8 @@
 """Test think/decide logic."""
 import pytest
-from agents_chat.author.think import _extract_json, _format_active_sessions, _format_new_mail, build_think_prompt
-from agents_chat.llm.mock import MockLLM
-from agents_chat.models import Mail, Persona, SessionContext, TickContext
+from agents_chat.v1.author.think import _extract_json, _format_active_sessions, _format_new_mail, build_think_prompt
+from agents_chat.v1.llm.mock import MockLLM
+from agents_chat.v1.models import Mail, Persona, SessionContext, TickContext
 
 
 def test_extract_json_pure():

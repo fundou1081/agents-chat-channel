@@ -4,9 +4,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agents_chat.author.think import _extract_json
-from agents_chat.llm.qwen import QwenAgent
-from agents_chat.models import Persona, TickContext
+from agents_chat.v1.author.think import _extract_json
+from agents_chat.v1.llm.qwen import QwenAgent
+from agents_chat.v1.models import Persona, TickContext
 
 
 class FakeResponse:
@@ -72,7 +72,7 @@ async def test_qwen_parses_valid_json():
     fake_session = FakeSession(fake_resp)
 
     # 显式用 OpenAI 模式 (force)
-    with patch("agents_chat.llm.qwen.aiohttp.ClientSession", return_value=fake_session):
+    with patch("agents_chat.v1.llm.qwen.aiohttp.ClientSession", return_value=fake_session):
         agent = QwenAgent(
             base_url="https://openrouter.ai/api/v1",
             api_key="fake-key-for-test", model="qwen/test",
@@ -98,7 +98,7 @@ async def test_qwen_handles_invalid_json():
     fake_resp = FakeResponse(200, make_qwen_response(qwen_output))
     fake_session = FakeSession(fake_resp)
 
-    with patch("agents_chat.llm.qwen.aiohttp.ClientSession", return_value=fake_session):
+    with patch("agents_chat.v1.llm.qwen.aiohttp.ClientSession", return_value=fake_session):
         agent = QwenAgent(
             base_url="https://openrouter.ai/api/v1",
             api_key="fake", model="qwen/test",
@@ -106,7 +106,7 @@ async def test_qwen_handles_invalid_json():
         )
         p = Persona(id="zhang", display_name="zhang", workdir="/tmp")
         # 模拟有一封新邮件, fallback 会回这封
-        from agents_chat.models import Mail
+        from agents_chat.v1.models import Mail
         m = Mail.new(sender="god", recipients=["zhang"], subject="hi", body="hello")
         ctx = TickContext(persona=p, new_mail=[m], active_sessions=[])
         decision = await agent.think(system="sys", user="user", ctx=ctx)
@@ -123,7 +123,7 @@ async def test_qwen_handles_http_error():
     fake_resp = FakeResponse(401, {"error": "unauthorized"})
     fake_session = FakeSession(fake_resp)
 
-    with patch("agents_chat.llm.qwen.aiohttp.ClientSession", return_value=fake_session):
+    with patch("agents_chat.v1.llm.qwen.aiohttp.ClientSession", return_value=fake_session):
         agent = QwenAgent(
             base_url="https://openrouter.ai/api/v1",
             api_key="fake", model="qwen/test",

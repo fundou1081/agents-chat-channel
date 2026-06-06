@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from agents_chat.policy import NetworkPolicy, RateLimiter, FreeChatManager
+from agents_chat.v1.policy import NetworkPolicy, RateLimiter, FreeChatManager
 
 
 def test_network_policy_defaults():

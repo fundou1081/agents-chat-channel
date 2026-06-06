@@ -3,8 +3,8 @@ import json
 
 import pytest
 
-from agents_chat.models import Mail
-from agents_chat.monitor import EXTERNAL_SENDERS, Event, Monitor
+from agents_chat.v1.models import Mail
+from agents_chat.v1.monitor import EXTERNAL_SENDERS, Event, Monitor
 
 
 @pytest.fixture

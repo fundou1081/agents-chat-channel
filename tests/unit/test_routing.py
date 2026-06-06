@@ -1,7 +1,7 @@
 """Test recipient routing / alias resolution."""
 import pytest
 
-from agents_chat.author.routing import RECIPIENT_ALIASES, resolve_recipients
+from agents_chat.v1.author.routing import RECIPIENT_ALIASES, resolve_recipients
 
 
 class FakeRegistry:

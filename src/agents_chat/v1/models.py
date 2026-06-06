@@ -312,3 +312,107 @@ class TickContext:
             "recent_activities": self.recent_own_activities[:10],
             "memory_recall": self.memory_recall,
         }
+
+
+# ============================================================================
+# DAG (Phase 3) — 并行调度
+# ============================================================================
+
+
+class DagStatus(str, Enum):
+    """DAG 整体状态机.
+
+    pending → active → (completed | failed | cancelled)
+    """
+    PENDING = "pending"
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class DagNodeStatus(str, Enum):
+    """DAG 节点状态机.
+
+    pending → running → (done | failed)
+                    ↓
+                  blocked (上游 failed)
+    """
+    PENDING = "pending"
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+    BLOCKED = "blocked"
+
+
+@dataclass
+class DagNode:
+    """DAG 上的一个节点 (一个 author 要干的事).
+
+    depends_on: 依赖的 node id 列表; 空 list = 无依赖, 可立即派发.
+    """
+    id: str                                  # DAG 内唯一 (e.g. "api", "ui", "integ")
+    title: str = ""
+    body: str = ""
+    assignee: str = ""                       # 派给哪个 author (e.g. "li-backend")
+    depends_on: list[str] = field(default_factory=list)
+    status: str = "pending"                  # DagNodeStatus
+    started_at: str = ""
+    completed_at: str = ""
+    dispatch_mail_id: str = ""               # 派发时发的 mail id
+    report_mail_id: str = ""                 # author 回执的 mail id
+    error: str = ""                          # 失败原因
+    timeout_at: str = ""                     # 期望回执时间
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "DagNode":
+        return cls(**{k: v for k in v if k in cls.__dataclass_fields__})
+
+
+@dataclass
+class DAG:
+    """一个完整任务的有向无环图.
+
+    提交后由 OrchestratorAuthor 推进.
+    """
+    id: str
+    title: str = ""
+    description: str = ""
+    created_by: str = "god"
+    created_at: str = ""
+    status: str = "pending"                  # DagStatus
+    nodes: list[DagNode] = field(default_factory=list)
+    post_id: str = ""                        # 关联的 dag_dispatch post
+    completed_at: str = ""
+
+    def get_node(self, node_id: str) -> DagNode | None:
+        for n in self.nodes:
+            if n.id == node_id:
+                return n
+        return None
+
+    def ready_nodes(self) -> list[DagNode]:
+        """返回所有 status=pending 且 deps 都 done 的节点 (可派发)."""
+        done_ids = {n.id for n in self.nodes if n.status == "done"}
+        return [
+            n for n in self.nodes
+            if n.status == "pending"
+            and all(dep in done_ids for dep in n.depends_on)
+        ]
+
+    def is_terminal(self) -> bool:
+        """DAG 是否到达终态."""
+        return self.status in ("completed", "failed", "cancelled")
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "DAG":
+        d = dict(d)
+        nodes_data = d.pop("nodes", [])
+        d["nodes"] = [DagNode.from_dict(n) for n in nodes_data]
+        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})

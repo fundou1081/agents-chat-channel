@@ -1,7 +1,7 @@
 """Test session persistence."""
 import pytest
-from agents_chat.models import SessionContext, SessionStatus
-from agents_chat.storage.session_db import SessionDB
+from agents_chat.v1.models import SessionContext, SessionStatus
+from agents_chat.v1.storage.session_db import SessionDB
 
 
 @pytest.mark.asyncio

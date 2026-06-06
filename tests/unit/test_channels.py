@@ -1,8 +1,8 @@
 """Test ChannelDB: channels, members, messages."""
 import pytest
 
-from agents_chat.models import Channel, ChannelMessage
-from agents_chat.storage.channels_db import ChannelDB
+from agents_chat.v1.models import Channel, ChannelMessage
+from agents_chat.v1.storage.channels_db import ChannelDB
 
 
 @pytest.fixture

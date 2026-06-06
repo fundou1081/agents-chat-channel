@@ -1,0 +1,4 @@
+{"id": "ch_general_1", "ts": "2026-06-06T15:03:41.195668+00:00", "from": "god", "content": "@qwencode 写个 hello.py", "mentions": ["qwencode"], "type": "mention"}
+{"id": "ch_general_2", "ts": "2026-06-06T15:03:41.508987+00:00", "from": "god", "content": "[TASK task_xyz] 干点啥", "mentions": [], "type": "task_broadcast"}
+{"id": "ch_general_3", "ts": "2026-06-06T15:03:49.726669+00:00", "from": "god", "content": "@qwencode 写个 hello.py", "mentions": ["qwencode"], "type": "mention"}
+{"id": "ch_general_4", "ts": "2026-06-06T15:03:50.038538+00:00", "from": "god", "content": "[TASK task_xyz] 干点啥", "mentions": [], "type": "task_broadcast"}

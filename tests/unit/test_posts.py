@@ -3,8 +3,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from agents_chat.models import Post, Persona
-from agents_chat.storage.posts_db import PostsDB
+from agents_chat.v1.models import Post, Persona
+from agents_chat.v1.storage.posts_db import PostsDB
 
 
 @pytest.fixture
