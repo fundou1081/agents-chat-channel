@@ -53,6 +53,20 @@ h2 { font-size: 18px; margin: 24px 0 12px; }
 .status-stalled { background: #da363333; color: #f85149; }
 .status-off_duty { background: #6e768133; color: #7d8590; }
 
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  margin-left: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.badge-mock { background: #6e768133; color: #7d8590; }
+.badge-qwen { background: #1f6feb33; color: #58a6ff; }
+.badge-opencode { background: #23863633; color: #3fb950; }
+
 .metric {
   display: flex;
   justify-content: space-between;
@@ -176,11 +190,12 @@ async function refresh() {
       <div class="header">
         <div class="emoji">${a.persona.emoji}</div>
         <div>
-          <div class="name">${a.persona.display_name}<span class="status-pill status-${a.status}">${a.status}</span></div>
+          <div class="name">${a.persona.display_name}<span class="status-pill status-${a.status}">${a.status}</span><span class="badge badge-${a.llm_backend}">${a.llm_backend}</span></div>
           <div class="title">${a.persona.title} · ${a.persona.id} ${a.is_on_duty ? '🟢 on duty' : '🌙 off duty'}</div>
         </div>
       </div>
       <div class="metric"><span>Heartbeat</span><span>${a.heartbeat_seconds}s</span></div>
+      <div class="metric"><span>LLM model</span><span>${a.llm_model || '(default)'}</span></div>
       <div class="metric"><span>Total ticks</span><span>${a.total_ticks}</span></div>
       <div class="metric"><span>Total actions</span><span>${a.total_actions}</span></div>
       <div class="metric"><span>Last tick</span><span>${a.last_tick_at ? a.last_tick_at.split('T')[1].slice(0,8) : '-'}</span></div>

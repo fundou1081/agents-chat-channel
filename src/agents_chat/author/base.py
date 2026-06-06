@@ -332,6 +332,8 @@ class Author:
                 "emoji": self.persona.emoji,
                 "title": self.persona.title,
             },
+            "llm_backend": self.persona.llm_backend,
+            "llm_model": self.persona.llm_model,
             "status": self.status,
             "is_on_duty": self.persona.is_on_duty,
             "heartbeat_seconds": self._interval_for(),

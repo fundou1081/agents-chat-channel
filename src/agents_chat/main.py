@@ -25,6 +25,10 @@ from .web.server import start_web_server
 
 WORKDIR_BASE = os.environ.get("AGENTCHAT_WORKDIR", "/tmp/agents-chat-workdirs")
 
+# 默认 backend 模型 (可用 env 覆盖)
+QWEN_MODEL = os.environ.get("AGENTCHAT_QWEN_MODEL", "minimax-m2.5:cloud")
+OPENCODE_MODEL = os.environ.get("AGENTCHAT_OPENCODE_MODEL", "opencode/minimax-m3-free")
+
 # 一些内置 personas
 BUILTIN_PERSONAS = {
     "zhang": Persona(
@@ -37,6 +41,8 @@ BUILTIN_PERSONAS = {
         workdir=f"{WORKDIR_BASE}/zhang",
         heartbeat_seconds=15,
         sleep_hours=None,
+        llm_backend="opencode",
+        llm_model=OPENCODE_MODEL,
     ),
     "li": Persona(
         id="li-backend",
@@ -48,6 +54,8 @@ BUILTIN_PERSONAS = {
         workdir=f"{WORKDIR_BASE}/li",
         heartbeat_seconds=18,
         sleep_hours=None,
+        llm_backend="opencode",
+        llm_model=OPENCODE_MODEL,
     ),
     "pm": Persona(
         id="pm",
@@ -108,6 +116,8 @@ BUILTIN_PERSONAS = {
         workdir=f"{WORKDIR_BASE}/pm",
         heartbeat_seconds=15,
         sleep_hours=None,
+        llm_backend="qwen",
+        llm_model=QWEN_MODEL,
     ),
 }
 
@@ -124,8 +134,12 @@ def get_sessions() -> SessionDB:
     return SessionDB(get_data_dir() / "sessions.db")
 
 
-def make_authors(persona_ids: list[str], llm, registry: "HeartbeatRegistry | None" = None) -> dict[str, Author]:
-    """根据 persona id 创建 author。"""
+def make_authors(persona_ids: list[str], llm=None, registry: "HeartbeatRegistry | None" = None) -> dict[str, Author]:
+    """根据 persona id 创建 author。
+
+    如果传了 llm, 所有 author 共享同一个 (override 默认).
+    如果没传, 每个 author 用自己的 persona.llm_backend + persona.llm_model.
+    """
     mailbox = get_mailbox()
     sessions = get_sessions()
     authors = {}
@@ -133,16 +147,47 @@ def make_authors(persona_ids: list[str], llm, registry: "HeartbeatRegistry | Non
         if pid not in BUILTIN_PERSONAS:
             print(f"Unknown persona: {pid}. Available: {list(BUILTIN_PERSONAS.keys())}")
             continue
+        persona = BUILTIN_PERSONAS[pid]
+        # 决定 LLM
+        if llm is not None:
+            author_llm = llm  # 全局 override
+        else:
+            author_llm = _make_llm_for_persona(persona)
         a = Author(
-            persona=BUILTIN_PERSONAS[pid],
+            persona=persona,
             mailbox=mailbox,
             sessions=sessions,
-            llm=llm,
+            llm=author_llm,
             data_dir=get_data_dir() / "logs",
             registry=registry,
         )
         authors[pid] = a
     return authors
+
+
+def _make_llm_for_persona(persona) -> object:
+    """根据 persona 的 llm_backend / llm_model 创建 LLM。"""
+    backend = persona.llm_backend
+    if backend == "mock":
+        from .llm.mock import MockLLM
+        return MockLLM()
+    elif backend == "qwen":
+        from .llm.qwen import QwenAgent
+        model = persona.llm_model or "minimax-m2.5:cloud"
+        return QwenAgent(
+            base_url="http://localhost:11434",
+            model=model,
+            timeout_seconds=60,
+        )
+    elif backend == "opencode":
+        from .llm.opencode import OpenCodeAgent
+        model = persona.llm_model or "opencode/minimax-m3-free"
+        return OpenCodeAgent(
+            model=model,
+            timeout_seconds=180,
+        )
+    else:
+        raise ValueError(f"Unknown llm_backend: {backend}")
 
 
 # =============================================================================
@@ -151,18 +196,18 @@ def make_authors(persona_ids: list[str], llm, registry: "HeartbeatRegistry | Non
 
 
 def _make_llm(args) -> object:
-    """根据 --llm 参数创建 LLM 实例."""
+    """根据 --llm 参数创建 LLM 实例 (给 cmd_demo / cmd_web / cmd_status 显式 override 所有 persona)."""
     backend = getattr(args, "llm", "mock")
     if backend == "mock":
         from .llm.mock import MockLLM
         return MockLLM()
     elif backend == "opencode":
         from .llm.opencode import OpenCodeAgent
-        model = getattr(args, "model", None) or "opencode/minimax-m3-free"
+        model = getattr(args, "model", None) or OPENCODE_MODEL
         return OpenCodeAgent(model=model, timeout_seconds=180)
     elif backend == "qwen":
         from .llm.qwen import QwenAgent
-        model = getattr(args, "model", None) or "minimax-m2.5:cloud"
+        model = getattr(args, "model", None) or QWEN_MODEL
         # 本地 ollama daemon (默认), 不需 key
         base_url = getattr(args, "base_url", None) or "http://localhost:11434"
         return QwenAgent(model=model, base_url=base_url, timeout_seconds=120)
@@ -182,14 +227,20 @@ async def cmd_demo(args):
     print("=" * 60)
     print("Authors: zhang (前端), li (后端), pm (PM)")
     print(f"LLM backend: {args.llm}")
+    if args.llm == "auto":
+        print("auto = 每个 author 用自己的 persona.llm_backend 配置")
     if args.llm == "opencode":
         print("⚠️  opencode 后端: 调 CLI, 真干活 (改文件, 跑命令), 慢")
     print("Demo: god 发任务给 PM, PM 派给 zhang + li, 它们互相协作")
     print()
 
-    llm = _make_llm(args)
+    llm = None if args.llm == "auto" else _make_llm(args)
     registry = HeartbeatRegistry()
     authors = make_authors(["pm", "zhang", "li"], llm, registry=registry)
+    for a in authors.values():
+        b = a.persona.llm_backend
+        m = a.persona.llm_model or "(default)"
+        print(f"  {a.persona.id:20s} → {b:10s} {m}")
     for a in authors.values():
         registry.register(a)
 
@@ -264,7 +315,7 @@ async def cmd_web(args):
     print(f"LLM: {args.llm}")
     print("=" * 60)
 
-    llm = _make_llm(args)
+    llm = None if args.llm == "auto" else _make_llm(args)
     authors = make_authors(["pm", "zhang", "li"], llm)
     registry = HeartbeatRegistry()
     for a in authors.values():
@@ -293,7 +344,7 @@ async def cmd_send(args):
 
 async def cmd_status(args):
     """打印所有 author 状态 (一次性,不启动 heartbeat)."""
-    llm = _make_llm(args)
+    llm = None if args.llm == "auto" else _make_llm(args)
     authors = make_authors(["pm", "zhang", "li"], llm)
     registry = HeartbeatRegistry()
     for a in authors.values():
@@ -312,14 +363,16 @@ def cli():
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_demo = sub.add_parser("demo", help="Run end-to-end demo (no web)")
-    p_demo.add_argument("--llm", choices=["mock", "opencode", "qwen"], default="mock")
+    p_demo.add_argument("--llm", choices=["mock", "opencode", "qwen", "auto"], default="auto",
+                        help="LLM backend (auto = per-persona config, default)")
     p_demo.add_argument("--model", default=None, help="model id (opencode / qwen)")
     p_demo.add_argument("--base-url", default=None, help="API base url (qwen)")
     p_demo.add_argument("--duration", type=int, default=90, help="demo duration seconds")
 
     p_web = sub.add_parser("web", help="Start web UI")
     p_web.add_argument("--port", type=int, default=7331)
-    p_web.add_argument("--llm", choices=["mock", "opencode", "qwen"], default="mock")
+    p_web.add_argument("--llm", choices=["mock", "opencode", "qwen", "auto"], default="auto",
+                        help="LLM backend (auto = per-persona config, default)")
     p_web.add_argument("--model", default=None, help="model id (opencode / qwen)")
     p_web.add_argument("--base-url", default=None, help="API base url (qwen)")
 
@@ -329,7 +382,7 @@ def cli():
     p_send.add_argument("--body", required=True)
 
     p_status = sub.add_parser("status", help="One-shot status of all authors")
-    p_status.add_argument("--llm", choices=["mock", "opencode", "qwen"], default="mock")
+    p_status.add_argument("--llm", choices=["mock", "opencode", "qwen", "auto"], default="auto")
     p_status.add_argument("--model", default=None)
     p_status.add_argument("--base-url", default=None)
 

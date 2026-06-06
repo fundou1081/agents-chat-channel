@@ -171,6 +171,9 @@ class Persona:
     heartbeat_seconds: int = 30       # 平时心跳间隔
     sleep_hours: tuple[int, int] | None = (9, 22)  # 工时 (开始, 结束), None = 24/7
     off_duty_interval: int = 600      # 下班时心跳间隔
+    # LLM 后端配置
+    llm_backend: str = "mock"         # "mock" | "qwen" | "opencode"
+    llm_model: str | None = None      # 后端的具体 model (None 用默认)
 
     @property
     def is_on_duty(self) -> bool:
