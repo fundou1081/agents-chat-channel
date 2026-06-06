@@ -42,8 +42,15 @@ class CLI(Protocol):
 
     async def invoke(
         self, prompt: str, resume_session: Optional[str] = None,
+        workspace_dir: Optional[str] = None,
     ) -> CLIResponse:
-        """调用 CLI. resume_session=None 时创建新 session, 否则恢复."""
+        """调用 CLI. resume_session=None 时创建新 session, 否则恢复.
+
+        workspace_dir: Agent 的工作目录.
+          - opencode / claude: subprocess(cwd=workspace_dir), CLI 启动后读 claude.md / opencode.md
+          - qwen (HTTP): 不用 cwd, 但可能在 prompt 里说 "看 qwen.md"
+          - mock: 忽略
+        """
         ...
 
 

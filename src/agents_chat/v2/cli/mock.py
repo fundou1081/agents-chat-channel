@@ -54,6 +54,7 @@ class MockCLI:
 
     async def invoke(
         self, prompt: str, resume_session: Optional[str] = None,
+        workspace_dir: Optional[str] = None,
     ) -> CLIResponse:
         start = time.time()
         self.call_count += 1

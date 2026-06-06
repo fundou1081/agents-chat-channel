@@ -96,6 +96,7 @@ class Agent:
         poll_interval: float = 2.0,
         default_channel: str = "general",
         system_prompt: str = "",
+        workspace_dir: str | Path | None = None,
     ):
         self.agent_id = agent_id
         self.cli = cli
@@ -120,6 +121,75 @@ class Agent:
         self.channels_dir.mkdir(parents=True, exist_ok=True)
         self.mailboxes_dir.mkdir(parents=True, exist_ok=True)
         self.lock_dir.mkdir(parents=True, exist_ok=True)
+
+        # workspace_dir: 每个 agent 独立工作目录, CLI 在里面启动并读 <cli_name>.md
+        if workspace_dir is None:
+            workspace_dir = self.data_dir / "workspaces" / agent_id
+        self.workspace_dir = Path(workspace_dir)
+        self.workspace_dir.mkdir(parents=True, exist_ok=True)
+        # 启动时写 <cli_name>.md 引导文件
+        self._init_workspace_files()
+
+    def _init_workspace_files(self):
+        """写 {workspace_dir}/{cli.name}.md 引导文件 (claude.md / opencode.md / qwen.md).
+
+        CLI 工具启动后会自动读工作目录里这个文件作为角色引导.
+        如果文件已存在, 保留 (用户可能手动改了).
+        """
+        md_name = f"{self.cli.name}.md"
+        md_path = self.workspace_dir / md_name
+        if md_path.exists():
+            return
+        md_content = self._build_workspace_md()
+        md_path.write_text(md_content, encoding="utf-8")
+
+    def _build_workspace_md(self) -> str:
+        """构造 {cli_name}.md 引导文件内容."""
+        md_name = f"{self.cli.name}.md"
+        return f"""# {self.agent_id} 角色定义 (v2.0)
+
+你是 **{self.agent_id}**, 在多 agent 协作网络中工作. 本文件由 Agent 启动时自动生成,
+你可以手动修改, Agent 不会覆盖.
+
+## 能力标签
+
+{', '.join(self.capabilities) or '通用'}
+
+## 角色提示 (system_prompt)
+
+{self.system_prompt or '(无)'}
+
+## 工作环境 (相对本文件)
+
+- 频道: `../channels/{{name}}.jsonl` (JSONL, 可读可写)
+- 我的邮箱: `../mailboxes/{self.agent_id}.json` (pending 邮件)
+- 我的 session 索引: `../sessions/{self.agent_id}.json` (local → remote 映射)
+- 任务状态板: `../state_board.json` (全局, 只读)
+- 任务锁: `../locks/task_xxx.lock` (5min TTL, mtime 判超时)
+
+## 工作规则
+
+1. **STATUS 块**: 每条 reply 必须嵌入, Scanner 解析用于调度
+   ```
+   <!--STATUS
+    session_id: <local_sess_id>
+    task_id: <task_id>
+    progress: <0-100>
+    summary: <一句话总结>
+    next_action: <下一步>
+    confidence: <low|medium|high>
+   -->
+   ```
+2. **@mention**: reply 里的 `@xxx` 由 Scanner 自动投递 mention 邮件给 xxx
+3. **[TASK] 标记**: 频道消息里的 `[TASK task_xxx]` 会被 Scanner 广播成 task_broadcast
+4. **session resume**: 同一 task 多次处理会自动用同一 session_id (本地映射)
+
+## 本文件说明
+
+- 文件名: `{md_name}` (跟 CLI 工具名匹配, e.g. claude.md / opencode.md / qwen.md)
+- CLI ({self.cli.name}) 启动后会自动读本文件作为角色引导
+- 修改本文件不会影响 Agent 行为 (Agent 不读), 但会影响 CLI 行为
+"""
 
     # ------------------------------------------------------------------
     # 公共 API
@@ -203,8 +273,12 @@ class Agent:
         prompt = self._build_prompt(mail, task_id, channel_name, content)
 
         # 调 CLI
-        print(f"[{self.agent_id}] 🛠 invoke CLI (resume={remote_sess})")
-        response = await self.cli.invoke(prompt, resume_session=remote_sess)
+        print(f"[{self.agent_id}] 🛠 invoke CLI (resume={remote_sess}, workspace={self.workspace_dir})")
+        response = await self.cli.invoke(
+            prompt,
+            resume_session=remote_sess,
+            workspace_dir=str(self.workspace_dir),
+        )
 
         if not response.ok:
             err_reply = (

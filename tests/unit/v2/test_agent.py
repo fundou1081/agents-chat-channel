@@ -201,7 +201,7 @@ class TestAgentRun:
         from agents_chat.v2.cli.base import CLIResponse
         class FailingCLI:
             name = "failing"
-            async def invoke(self, prompt, resume_session=None):
+            async def invoke(self, prompt, resume_session=None, workspace_dir=None):
                 return CLIResponse(output_text="", error="network down")
         agent = Agent(agent_id="qwencode", cli=FailingCLI(), data_dir=tmp_path)
         agent.mailbox.append(

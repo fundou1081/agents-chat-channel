@@ -107,6 +107,7 @@ async def _run_agent_async(args):
     data_dir = get_data_dir(args)
     ensure_dirs(data_dir)
     cli = make_cli(args.cli, args.agent_id, data_dir)
+    workspace_dir = Path(args.workspace_dir).resolve() if args.workspace_dir else None
     agent = Agent(
         agent_id=args.agent_id,
         cli=cli,
@@ -114,7 +115,11 @@ async def _run_agent_async(args):
         capabilities=args.capabilities or [],
         poll_interval=args.poll_interval,
         default_channel=args.channel,
+        system_prompt=args.system_prompt,
+        workspace_dir=workspace_dir,
     )
+    print(f"[{args.agent_id}] workspace: {agent.workspace_dir}")
+    print(f"[{args.agent_id}] {args.cli}.md 路径: {agent.workspace_dir / (args.cli + '.md')}")
     try:
         await agent.run()
     except KeyboardInterrupt:
@@ -177,6 +182,7 @@ async def _run_all_async(args):
         cli = make_cli(args.cli, aid, data_dir)
         agents.append(Agent(
             agent_id=aid, cli=cli, data_dir=data_dir, poll_interval=2.0,
+            system_prompt=f"你是 {aid}, 模拟 agent",
         ))
 
     tasks = [asyncio.create_task(scanner.run())]
@@ -311,6 +317,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--capabilities", nargs="*", default=[])
     sp.add_argument("--poll-interval", type=float, default=2.0)
     sp.add_argument("--channel", default="general")
+    sp.add_argument("--workspace-dir", default=None, help="(默认: data_dir/workspaces/{agent_id})")
+    sp.add_argument("--system-prompt", default="", help="注入到 workspace <cli>.md")
 
     # run-scanner
     sp = sub.add_parser("run-scanner", help="跑 Scanner 后台进程")

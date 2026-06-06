@@ -10,6 +10,7 @@ qwen 是 OpenAI-compatible HTTP API, 没有 --resume 命令.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
@@ -69,9 +70,21 @@ class QwenCLI:
 
     async def invoke(
         self, prompt: str, resume_session: Optional[str] = None,
+        workspace_dir: Optional[str] = None,
     ) -> CLIResponse:
         start = time.time()
         self.call_count += 1
+
+        # workspace_dir 对 HTTP API 不直接生效 (qwen 在远程), 但可以在 prompt 里提示
+        # Agent 写了 {workspace_dir}/qwen.md (引导文件), 这里把"看 qwen.md"注入 prompt
+        if workspace_dir:
+            md_path = Path(workspace_dir) / "qwen.md"
+            if md_path.exists():
+                md_content = md_path.read_text("utf-8")[:2000]  # 限 2K 防爆
+                prompt = (
+                    f"[Workspace Guide: read {md_path}]\n{md_content}\n\n"
+                    f"[Task]\n{prompt}"
+                )
 
         if not self.api_key:
             return CLIResponse(

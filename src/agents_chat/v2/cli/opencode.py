@@ -33,6 +33,7 @@ class OpenCodeCLI:
 
     async def invoke(
         self, prompt: str, resume_session: Optional[str] = None,
+        workspace_dir: Optional[str] = None,
     ) -> CLIResponse:
         start = time.time()
         self.call_count += 1
@@ -44,10 +45,16 @@ class OpenCodeCLI:
             cmd.extend(["--session", resume_session])
 
         try:
+            # 如果提供 workspace_dir, subprocess 在 workspace_dir 里启动
+            # opencode 启动后会自动读 ./opencode.md (或 AGENTS.md) 作为引导
+            kwargs = {}
+            if workspace_dir:
+                kwargs["cwd"] = workspace_dir
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                **kwargs,
             )
             try:
                 stdout_b, stderr_b = await asyncio.wait_for(
