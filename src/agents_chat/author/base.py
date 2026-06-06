@@ -30,6 +30,7 @@ from ..models import (
 from ..storage.mailbox_db import MailboxDB
 from ..storage.session_db import SessionDB
 from .think import decide
+from .routing import RECIPIENT_ALIASES, resolve_recipients as _resolve_recipients_impl
 
 
 class Author:
@@ -233,21 +234,42 @@ class Author:
         # 持久化
         await self.sessions_db.upsert(self.persona.id, s)
 
+    def _resolve_recipients(self, recipients) -> list[str]:
+        """验证 + 重路由 recipients (委托给 routing 模块).
+
+        策略:
+        1. 已经是真实 author id → 保留
+        2. alias_map 匹配 (dev, developer, team, 小张, etc) → 映射
+        3. 模糊匹配 (子串/前缀) → 找最像的
+        4. 找不到 → log warning + drop
+        """
+        return _resolve_recipients_impl(
+            list(recipients),
+            self.registry,
+            persona_id=self.persona.id,
+        )
+
     async def _execute(self, decision: Decision, new_mail: list[Mail]):
         """执行 LLM 决策。"""
         # 发邮件
         for m in decision.outgoing_mail:
             # 强制 sender 是自己
             object.__setattr__(m, 'sender', self.persona.id)
+            # 验证 + 重路由 recipients
+            resolved_recipients = self._resolve_recipients(m.recipients)
+            object.__setattr__(m, 'recipients', tuple(resolved_recipients))
+            if not resolved_recipients:
+                print(f"  [{self.persona.id}] ⚠ mail dropped, no valid recipients: {m.subject[:40]}")
+                continue
             await self.mailbox.deliver(m)
             # Burst 给收件人
-            for r in m.recipients:
+            for r in resolved_recipients:
                 if r != self.persona.id and self.registry:
                     other = self.registry.get(r)
                     if other:
                         other.trigger_immediate_tick()
             self.total_actions += 1
-            print(f"  [{self.persona.id}] → mail to {m.recipients}: {m.subject[:40]}")
+            print(f"  [{self.persona.id}] → mail to {resolved_recipients}: {m.subject[:40]}")
 
         # 关闭 sessions
         for sid in decision.closed_sessions:
