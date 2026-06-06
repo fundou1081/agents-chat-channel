@@ -138,6 +138,10 @@ def _make_llm(args) -> object:
         from .llm.opencode import OpenCodeAgent
         model = getattr(args, "model", None) or "opencode/minimax-m3-free"
         return OpenCodeAgent(model=model, timeout_seconds=180)
+    elif backend == "qwen":
+        from .llm.qwen import QwenAgent
+        model = getattr(args, "model", None) or "qwen/qwen3-coder:free"
+        return QwenAgent(model=model, timeout_seconds=120)
     else:
         raise ValueError(f"Unknown LLM backend: {backend}")
 
@@ -284,14 +288,14 @@ def cli():
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_demo = sub.add_parser("demo", help="Run end-to-end demo (no web)")
-    p_demo.add_argument("--llm", choices=["mock", "opencode"], default="mock")
-    p_demo.add_argument("--model", default=None, help="model id (opencode)")
+    p_demo.add_argument("--llm", choices=["mock", "opencode", "qwen"], default="mock")
+    p_demo.add_argument("--model", default=None, help="model id (opencode / qwen)")
     p_demo.add_argument("--duration", type=int, default=90, help="demo duration seconds")
 
     p_web = sub.add_parser("web", help="Start web UI")
     p_web.add_argument("--port", type=int, default=7331)
-    p_web.add_argument("--llm", choices=["mock", "opencode"], default="mock")
-    p_web.add_argument("--model", default=None, help="model id (opencode)")
+    p_web.add_argument("--llm", choices=["mock", "opencode", "qwen"], default="mock")
+    p_web.add_argument("--model", default=None, help="model id (opencode / qwen)")
 
     p_send = sub.add_parser("send", help="Send a mail to an author")
     p_send.add_argument("--to", required=True, help="Recipient author id")
@@ -299,7 +303,7 @@ def cli():
     p_send.add_argument("--body", required=True)
 
     p_status = sub.add_parser("status", help="One-shot status of all authors")
-    p_status.add_argument("--llm", choices=["mock", "opencode"], default="mock")
+    p_status.add_argument("--llm", choices=["mock", "opencode", "qwen"], default="mock")
     p_status.add_argument("--model", default=None)
 
     args = parser.parse_args()
