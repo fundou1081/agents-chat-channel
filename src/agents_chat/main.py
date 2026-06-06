@@ -20,6 +20,7 @@ from .heartbeat import HeartbeatRegistry
 from .models import Mail, Persona
 from .monitor import Monitor
 from .policy import FreeChatManager, NetworkPolicy, RateLimiter
+from .storage.bulletin_db import BulletinDB
 from .storage.mailbox_db import MailboxDB
 from .storage.session_db import SessionDB
 from .web.server import start_web_server
@@ -144,6 +145,10 @@ def get_rate_limiter() -> RateLimiter:
     return RateLimiter(get_data_dir() / "logs" / "rate_limits.db")
 
 
+def get_bulletin_db() -> BulletinDB:
+    return BulletinDB(get_data_dir() / "bulletins.db")
+
+
 def get_policy() -> NetworkPolicy:
     return NetworkPolicy(
         max_mails_per_hour=int(os.environ.get("AGENTCHAT_MAX_MAILS_PER_HOUR", "30")),
@@ -154,7 +159,7 @@ def get_policy() -> NetworkPolicy:
     )
 
 
-def make_authors(persona_ids: list[str], llm=None, registry: "HeartbeatRegistry | None" = None, monitor: "Monitor | None" = None, rate_limiter: "RateLimiter | None" = None, policy: "NetworkPolicy | None" = None) -> dict[str, Author]:
+def make_authors(persona_ids: list[str], llm=None, registry: "HeartbeatRegistry | None" = None, monitor: "Monitor | None" = None, rate_limiter: "RateLimiter | None" = None, policy: "NetworkPolicy | None" = None, bulletin: "BulletinDB | None" = None) -> dict[str, Author]:
     """根据 persona id 创建 author。
 
     如果传了 llm, 所有 author 共享同一个 (override 默认).
@@ -168,6 +173,8 @@ def make_authors(persona_ids: list[str], llm=None, registry: "HeartbeatRegistry 
         rate_limiter = get_rate_limiter()
     if policy is None:
         policy = get_policy()
+    if bulletin is None:
+        bulletin = get_bulletin_db()
     authors = {}
     for pid in persona_ids:
         if pid not in BUILTIN_PERSONAS:
@@ -189,6 +196,7 @@ def make_authors(persona_ids: list[str], llm=None, registry: "HeartbeatRegistry 
             monitor=monitor,
             rate_limiter=rate_limiter,
             policy=policy,
+            bulletin=bulletin,
         )
         authors[pid] = a
     return authors

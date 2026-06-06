@@ -84,11 +84,19 @@ THINK_USER_TEMPLATE = """\
 # Active Sessions ({n_active} 个并行)
 {active_sessions_block}
 
+# 任务板 (Central Bulletin, {n_bulletins} 条跟 你 相关)
+{bulletins_block}
+
 # 最近的 memory 召回
 {memory_block}
 
 # 你的判断
 请基于以上信息, 输出 JSON 决策。
+- outgoing_mail 只能发给你明确的收件人 (recipients 必须是 author id)
+- 如果任务板里有 unassigned_task 且 required_role 匹配你, 可以 claim:
+  actions 里加 {{"type": "claim_announcement", "payload": {{"id": "<ann_id>"}}}}
+- 如果任务板里有 broadcast 跟 你有关, 可以回邮件参与
+- 如果任务板里有 discussion mention 你, 必须回邮件
 """
 
 
@@ -122,13 +130,16 @@ def build_think_prompt(ctx: TickContext) -> tuple[str, str]:
     new_mail_block = _format_new_mail(ctx.new_mail)
     active_sessions_block = _format_active_sessions(ctx.active_sessions)
     memory_block = "\n".join(f"- {m}" for m in ctx.memory_recall) or "(无)"
+    bulletins_block = _format_bulletins(ctx.bulletins)
 
     user = THINK_USER_TEMPLATE.format(
         now=datetime.now().isoformat(),
         n_new=len(ctx.new_mail),
         n_active=len(ctx.active_sessions),
+        n_bulletins=len(ctx.bulletins),
         new_mail_block=new_mail_block,
         active_sessions_block=active_sessions_block,
+        bulletins_block=bulletins_block,
         memory_block=memory_block,
     )
 
@@ -145,6 +156,20 @@ def _format_new_mail(mails) -> str:
             f"   {m.body[:200]}{'...' if len(m.body) > 200 else ''}\n"
             f"   thread_id={m.thread_id} mail_id={m.id} priority={m.priority}"
         )
+    return "\n".join(lines)
+
+
+def _format_bulletins(bulletins) -> str:
+    if not bulletins:
+        return "(无跟你相关的开放公告)"
+    lines = []
+    for b in bulletins:
+        role_tag = f" [role: {b.required_role}]" if b.required_role else ""
+        lines.append(f"📌 [{b.kind}]{role_tag} {b.title}  (id={b.id})")
+        if b.body:
+            lines.append(f"   {b.body[:200]}")
+        if b.tags:
+            lines.append(f"   tags: {', '.join(b.tags)}")
     return "\n".join(lines)
 
 

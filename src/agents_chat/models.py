@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
@@ -226,6 +226,55 @@ class Decision:
 
 
 # ============================================================================
+# Announcement (主动任务板)
+# ============================================================================
+
+
+@dataclass
+class Announcement:
+    """中央信息: 公告/广播/无主任务. 作者主动扫的.
+
+    kind:
+      - "broadcast": 公告, 给所有人看 (e.g. 团队公告, 周会通知)
+      - "unassigned_task": 无主任务, 任何匹配角色的人可 claim
+      - "discussion": 讨论, mentions 的人会看到
+    """
+
+    id: str
+    kind: str                                # "broadcast" | "unassigned_task" | "discussion"
+    title: str
+    body: str
+    posted_by: str                            # 谁发的 (e.g. "god", "pm")
+    posted_at: str                            # ISO timestamp
+    tags: list[str] = field(default_factory=list)  # 关键词标签
+    required_role: str = ""                   # "frontend" | "backend" | "any" | "pm" | ""
+    claimed_by: str = ""                      # 谁认领了
+    status: str = "open"                      # "open" | "claimed" | "closed" | "expired"
+    expires_at: str = ""                      # ISO timestamp, "" = 永不过期
+    thread_id: str = ""                       # 关联的邮件 thread (可选)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Announcement":
+        return cls(
+            id=d["id"],
+            kind=d["kind"],
+            title=d.get("title", ""),
+            body=d.get("body", ""),
+            posted_by=d.get("posted_by", "god"),
+            posted_at=d.get("posted_at", ""),
+            tags=d.get("tags", []),
+            required_role=d.get("required_role", ""),
+            claimed_by=d.get("claimed_by", ""),
+            status=d.get("status", "open"),
+            expires_at=d.get("expires_at", ""),
+            thread_id=d.get("thread_id", ""),
+        )
+
+
+# ============================================================================
 # TickContext (tick 时的状态快照, 给 LLM 看)
 # ============================================================================
 
@@ -239,6 +288,7 @@ class TickContext:
     active_sessions: list[SessionContext]         # 所有 active session
     recent_own_activities: list[str] = field(default_factory=list)  # 最近自己的动作
     memory_recall: list[str] = field(default_factory=list)          # 从 long-term 召回的
+    bulletins: list[Announcement] = field(default_factory=list)     # 中央信息: 跟 author 相关的公告/无主任务
 
     def to_prompt_dict(self) -> dict:
         return {
@@ -249,6 +299,7 @@ class TickContext:
             },
             "new_mail": [m.to_dict() for m in self.new_mail],
             "active_sessions": [s.to_dict() for s in self.active_sessions],
+            "bulletins": [b.to_dict() for b in self.bulletins],
             "recent_activities": self.recent_own_activities[:10],
             "memory_recall": self.memory_recall,
         }

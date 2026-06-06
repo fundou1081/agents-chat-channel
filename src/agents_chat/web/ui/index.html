@@ -211,6 +211,7 @@ h2 { font-size: 18px; margin: 24px 0 12px; }
 <div class="tabs">
   <div class="tab active" data-tab="dashboard">Dashboard</div>
   <div class="tab" data-tab="conversations">💬 Conversations <span class="dot"></span></div>
+  <div class="tab" data-tab="bulletin">📋 任务板</div>
   <div class="tab" data-tab="mailbox">📬 Mailbox</div>
 </div>
 
@@ -258,6 +259,31 @@ h2 { font-size: 18px; margin: 24px 0 12px; }
   <div id="mailbox" class="mailbox"></div>
 </div>
 
+<!-- Tab: Bulletin Board (proactive) -->
+<div class="tab-content" data-tab="bulletin">
+  <h2>📋 任务板 (主动认领) <span class="dot"></span> <span style="font-size:12px;color:#7d8590;">(auto-refresh 3s)</span></h2>
+
+  <div class="send-form" style="margin-bottom:16px;">
+    <h3 style="margin:0 0 8px;font-size:14px;">📌 发布新公告</h3>
+    <select id="ann-kind" style="background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px;padding:6px 8px;margin:4px 0;width:100%;font-family:inherit;font-size:13px;">
+      <option value="unassigned_task">无主任务 (谁先认领谁做)</option>
+      <option value="broadcast">广播给所有人</option>
+      <option value="discussion">讨论 (mention 的人会看到)</option>
+    </select>
+    <input id="ann-title" placeholder="标题 (例: 写个新首页)" value="新首页">
+    <input id="ann-role" placeholder="required_role (frontend / backend / any, 可空)" value="frontend">
+    <input id="ann-tags" placeholder="tags,逗号分隔 (前端,ui)" value="前端,ui">
+    <textarea id="ann-body" placeholder="详细描述" rows="3"></textarea>
+    <button onclick="postAnnouncement()">📌 发布</button>
+    <span id="ann-status" style="margin-left:12px;font-size:12px;color:#7d8590;"></span>
+  </div>
+
+  <h3 style="margin:16px 0 8px;font-size:14px;">开放公告 (按时间倒序)</h3>
+  <div id="bulletin-list" class="conversations">
+    <div style="color:#7d8590; padding:20px; text-align:center;">暂无公告。</div>
+  </div>
+</div>
+
 <script>
 // ========== Tab switching ==========
 document.querySelectorAll('.tab').forEach(tab => {
@@ -277,7 +303,7 @@ async function fetchJSON(url) {
 }
 
 async function refresh() {
-  await Promise.all([refreshAuthors(), refreshMailbox(), refreshConversations()]);
+  await Promise.all([refreshAuthors(), refreshMailbox(), refreshConversations(), refreshBulletin()]);
 }
 
 async function refreshAuthors() {
@@ -426,6 +452,82 @@ async function triggerFreeChat() {
   setTimeout(refresh, 500);
 }
 
+async function postAnnouncement() {
+  const kind = document.getElementById('ann-kind').value;
+  const title = document.getElementById('ann-title').value;
+  const role = document.getElementById('ann-role').value;
+  const tags = document.getElementById('ann-tags').value.split(',').map(s => s.trim()).filter(s => s);
+  const body = document.getElementById('ann-body').value;
+  if (!title || !body) { alert('fill title and body'); return; }
+  const r = await fetch('/api/bulletin/post', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({kind, title, body, required_role: role, tags, posted_by: 'god'})
+  });
+  const j = await r.json();
+  document.getElementById('ann-status').textContent = '✓ posted: ' + j.id;
+  setTimeout(refresh, 500);
+}
+
+async function claimAnnouncement(id) {
+  const claimer = prompt('认领人是谁? (e.g. zhang-frontend)', 'zhang-frontend');
+  if (!claimer) return;
+  const r = await fetch(`/api/bulletin/${id}/claim`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({claimer})
+  });
+  const j = await r.json();
+  alert(j.ok ? '✓ claimed by ' + claimer : '✗ ' + j.message);
+  setTimeout(refresh, 500);
+}
+
+async function closeAnnouncement(id) {
+  if (!confirm('Close this announcement?')) return;
+  await fetch(`/api/bulletin/${id}/close`, {method: 'POST'});
+  setTimeout(refresh, 500);
+}
+
+async function refreshBulletin() {
+  const data = await fetchJSON('/api/bulletin?limit=30');
+  const items = data.items || [];
+  const el = document.getElementById('bulletin-list');
+  if (items.length === 0) {
+    el.innerHTML = '<div style="color:#7d8590; padding:20px; text-align:center;">暂无公告。 发布一个吧 ↑</div>';
+    return;
+  }
+  el.innerHTML = items.map(b => {
+    const is_claimed = b.status === 'claimed';
+    const claimed = b.claimed_by ? ` → <b style="color:#3fb950;">${b.claimed_by}</b>` : '';
+    const role_tag = b.required_role ? `<span class="badge badge-qwen">${b.required_role}</span>` : '';
+    return `
+      <div class="conv" style="border-left: 3px solid ${is_claimed ? '#3fb950' : '#58a6ff'}; padding: 12px;">
+        <div>
+          <span class="kind kind-mail_sent">[${b.kind}]</span>
+          <b>${b.title}</b>
+          ${role_tag}
+          <span class="time">${b.posted_at.split('T')[1]?.slice(0,8) || ''}</span>
+        </div>
+        <div class="body">${b.body || '(无内容)'}</div>
+        <div class="time">
+          id: <code>${b.id}</code>
+          ${b.tags && b.tags.length ? ` | tags: ${b.tags.join(', ')}` : ''}
+          | posted_by: ${b.posted_by}
+          ${claimed}
+        </div>
+        <div style="margin-top:8px;">
+          <button onclick="claimAnnouncement('${b.id}')" ${is_claimed ? 'disabled' : ''} style="background:${is_claimed ? '#6e7681' : '#238636'};color:#fff;border:none;padding:4px 12px;border-radius:4px;cursor:${is_claimed ? 'default' : 'pointer'};font-size:12px;margin-right:6px;">
+            ${is_claimed ? '✓ 已被认领' : '✋ Claim (认领)'}
+          </button>
+          <button onclick="closeAnnouncement('${b.id}')" style="background:#da3633;color:#fff;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">
+            ❌ Close
+          </button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
 async function sendMail() {
   const to = document.getElementById('send-to').value;
   const subject = document.getElementById('send-subject').value;
@@ -445,6 +547,7 @@ refresh();
 setInterval(refreshAuthors, 3000);
 setInterval(refreshMailbox, 5000);
 setInterval(refreshConversations, 2000);
+setInterval(refreshBulletin, 3000);
 </script>
 </body>
 </html>

@@ -163,6 +163,59 @@ def create_app(registry: HeartbeatRegistry) -> FastAPI:
         sess = registry.start_free_chat(topic, started_by=started_by)
         return {"ok": True, "session": sess}
 
+    # ----- Bulletin Board (主动任务板) -----
+
+    @app.get("/api/bulletin")
+    async def get_bulletin(kind: str | None = None, status: str = "open", limit: int = 50) -> dict:
+        from ..main import get_bulletin_db
+        db = get_bulletin_db()
+        if status == "all":
+            items = await db.list_all(limit=limit)
+        else:
+            items = await db.list_open(kind=kind, limit=limit)
+        return {
+            "items": [i.to_dict() for i in items],
+            "count": len(items),
+        }
+
+    @app.post("/api/bulletin/post")
+    async def post_bulletin(body: dict) -> dict:
+        from ..main import get_bulletin_db
+        db = get_bulletin_db()
+        ann = db.new(
+            kind=body.get("kind", "broadcast"),
+            title=body.get("title", ""),
+            body=body.get("body", ""),
+            posted_by=body.get("posted_by", "god"),
+            tags=body.get("tags", []),
+            required_role=body.get("required_role", ""),
+            expires_in_seconds=int(body.get("expires_in_seconds", 0)),
+            thread_id=body.get("thread_id", ""),
+        )
+        await db.post(ann)
+        # Burst all authors so they see the new announcement
+        registry.trigger_burst_all()
+        return ann.to_dict()
+
+    @app.post("/api/bulletin/{ann_id}/claim")
+    async def claim_bulletin(ann_id: str, body: dict | None = None) -> dict:
+        from ..main import get_bulletin_db
+        db = get_bulletin_db()
+        claimer = (body or {}).get("claimer", "god")
+        success, msg = await db.claim(ann_id, claimer)
+        if success:
+            # Burst the claimer (and others, so they know it's taken)
+            if claimer in registry.authors:
+                registry.authors[claimer].trigger_immediate_tick()
+        return {"ok": success, "message": msg}
+
+    @app.post("/api/bulletin/{ann_id}/close")
+    async def close_bulletin(ann_id: str) -> dict:
+        from ..main import get_bulletin_db
+        db = get_bulletin_db()
+        ok = await db.close(ann_id)
+        return {"ok": ok}
+
     @app.post("/api/send")
     async def send_mail(req: SendRequest) -> dict:
         author = registry.get(req.to)

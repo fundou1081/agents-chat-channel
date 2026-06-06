@@ -29,6 +29,7 @@ from ..models import (
     TickContext,
 )
 from ..policy import NetworkPolicy, RateLimiter
+from ..storage.bulletin_db import BulletinDB
 from ..storage.mailbox_db import MailboxDB
 from ..storage.session_db import SessionDB
 from .think import decide
@@ -64,6 +65,7 @@ class Author:
         monitor: Monitor | None = None,
         rate_limiter: RateLimiter | None = None,
         policy: NetworkPolicy | None = None,
+        bulletin: BulletinDB | None = None,
     ):
         self.persona = persona
         self.mailbox = mailbox
@@ -75,6 +77,7 @@ class Author:
         self.monitor = monitor  # 事件监控 (可选)
         self.rate_limiter = rate_limiter  # 流量控制 (可选)
         self.policy = policy or NetworkPolicy()  # 网络 policy
+        self.bulletin = bulletin  # 主动任务板 (可选)
 
         # 跟踪 last tick 时间 (用于 cooldown)
         self._last_tick_at: datetime | None = None
@@ -200,11 +203,20 @@ class Author:
         await self._load_sessions()
 
         # 4. 构造 TickContext
+        # 4a. 扫中央任务板 (主动通信)
+        bulletins_for_me = []
+        if self.bulletin:
+            try:
+                bulletins_for_me = await self.bulletin.list_for_author(self.persona, limit=10)
+            except Exception as e:
+                print(f"  [{self.persona.id}] ⚠ bulletin scan error: {e}")
+
         ctx = TickContext(
             persona=self.persona,
             new_mail=new_mail,
             active_sessions=list(self.sessions.values()),
             recent_own_activities=[a.get("summary", "") for a in self.activity_log[-20:]],
+            bulletins=bulletins_for_me,
         )
 
         # 4.5 Monitor: 记录收邮件
@@ -340,6 +352,21 @@ class Author:
                     tool_name = action.payload.get("tool", "?") if isinstance(action.payload, dict) else "?"
                     tool_input = str(action.payload)[:200] if action.payload else ""
                     self.monitor.tool_used(self.persona.id, tool_name, tool_input)
+            elif action.type == "claim_announcement":
+                # 主动认领任务
+                ann_id = action.payload.get("id", "") if isinstance(action.payload, dict) else ""
+                if self.bulletin and ann_id:
+                    success, msg = await self.bulletin.claim(ann_id, self.persona.id)
+                    if success:
+                        self.total_actions += 1
+                        if self.monitor:
+                            self.monitor.record(
+                                "announcement_claimed", actor=self.persona.id,
+                                thread_id=ann_id, summary=f"claimed: {ann_id}",
+                            )
+                        print(f"  [{self.persona.id}] ✓ claimed announcement: {ann_id}")
+                    else:
+                        print(f"  [{self.persona.id}] ✗ claim failed: {msg}")
                 self.total_actions += 1
                 print(f"  [{self.persona.id}] 🔧 tool: {action.payload}")
 
