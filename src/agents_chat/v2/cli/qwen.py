@@ -87,11 +87,16 @@ class QwenCLI:
                 )
 
         if not self.api_key:
-            return CLIResponse(
-                output_text="",
-                error="QwenCLI: api_key not set (env OPENROUTER_API_KEY or QWEN_API_KEY)",
-                elapsed_ms=int((time.time() - start) * 1000),
-            )
+            # ollama 本地 daemon 不验证 api_key, 允许空 key 走本地
+            # 检查是不是本地 ollama (base_url 包含 localhost / 127.0.0.1 / 0.0.0.0)
+            if any(host in self.base_url for host in ("localhost", "127.0.0.1", "0.0.0.0")):
+                self.api_key = "ollama-local"  # 占位
+            else:
+                return CLIResponse(
+                    output_text="",
+                    error="QwenCLI: api_key not set (env OPENROUTER_API_KEY or QWEN_API_KEY)",
+                    elapsed_ms=int((time.time() - start) * 1000),
+                )
 
         # 决定 session id
         if resume_session:
