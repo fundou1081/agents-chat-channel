@@ -71,8 +71,13 @@ async def test_qwen_parses_valid_json():
     fake_resp = FakeResponse(200, make_qwen_response(qwen_output))
     fake_session = FakeSession(fake_resp)
 
+    # 显式用 OpenAI 模式 (force)
     with patch("agents_chat.llm.qwen.aiohttp.ClientSession", return_value=fake_session):
-        agent = QwenAgent(api_key="fake-key-for-test", model="qwen/test")
+        agent = QwenAgent(
+            base_url="https://openrouter.ai/api/v1",
+            api_key="fake-key-for-test", model="qwen/test",
+            use_ollama_native=False,
+        )
         p = Persona(id="zhang", display_name="zhang", workdir="/tmp")
         ctx = TickContext(persona=p, new_mail=[], active_sessions=[])
         decision = await agent.think(system="sys", user="user", ctx=ctx)
@@ -94,7 +99,11 @@ async def test_qwen_handles_invalid_json():
     fake_session = FakeSession(fake_resp)
 
     with patch("agents_chat.llm.qwen.aiohttp.ClientSession", return_value=fake_session):
-        agent = QwenAgent(api_key="fake", model="qwen/test")
+        agent = QwenAgent(
+            base_url="https://openrouter.ai/api/v1",
+            api_key="fake", model="qwen/test",
+            use_ollama_native=False,
+        )
         p = Persona(id="zhang", display_name="zhang", workdir="/tmp")
         # 模拟有一封新邮件, fallback 会回这封
         from agents_chat.models import Mail
@@ -115,7 +124,11 @@ async def test_qwen_handles_http_error():
     fake_session = FakeSession(fake_resp)
 
     with patch("agents_chat.llm.qwen.aiohttp.ClientSession", return_value=fake_session):
-        agent = QwenAgent(api_key="fake", model="qwen/test")
+        agent = QwenAgent(
+            base_url="https://openrouter.ai/api/v1",
+            api_key="fake", model="qwen/test",
+            use_ollama_native=False,
+        )
         p = Persona(id="zhang", display_name="zhang", workdir="/tmp")
         ctx = TickContext(persona=p, new_mail=[], active_sessions=[])
         decision = await agent.think(system="sys", user="user", ctx=ctx)
@@ -124,19 +137,43 @@ async def test_qwen_handles_http_error():
     assert "401" in decision.thinking or "unauthorized" in decision.thinking.lower()
 
 
-def test_qwen_requires_api_key():
-    """没 API key 应该报错."""
+def test_qwen_requires_api_key_for_openai_mode():
+    """OpenAI 模式下没 API key 应该报错."""
     import os
-    saved = os.environ.pop("OPENROUTER_API_KEY", None)
-    saved2 = os.environ.pop("QWEN_API_KEY", None)
+    saved_keys = {k: os.environ.pop(k, None) for k in ["OPENROUTER_API_KEY", "QWEN_API_KEY", "OLLAMA_API_KEY"]}
     try:
         with pytest.raises(RuntimeError, match="API key"):
-            QwenAgent(api_key=None)
+            QwenAgent(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=None, use_ollama_native=False,
+            )
     finally:
-        if saved:
-            os.environ["OPENROUTER_API_KEY"] = saved
-        if saved2:
-            os.environ["QWEN_API_KEY"] = saved2
+        for k, v in saved_keys.items():
+            if v:
+                os.environ[k] = v
+
+
+def test_qwen_ollama_local_no_key_needed():
+    """本地 ollama 模式不需要 key (即使 env 有 OLLAMA_API_KEY, 也不强求)."""
+    import os
+    saved_keys = {k: os.environ.pop(k, None) for k in ["OPENROUTER_API_KEY", "QWEN_API_KEY", "OLLAMA_API_KEY"]}
+    try:
+        agent = QwenAgent(
+            base_url="http://localhost:11434",
+            api_key=None, model="minimax-m2.5:cloud",
+        )
+        assert agent.use_ollama_native is True
+        assert agent.api_key is None  # 没设 key, ollama 不需要
+    finally:
+        for k, v in saved_keys.items():
+            if v:
+                os.environ[k] = v
+
+
+def test_qwen_auto_detects_ollama_native():
+    """localhost 自动用 ollama native."""
+    agent = QwenAgent(base_url="http://127.0.0.1:11434", api_key=None, model="x")
+    assert agent.use_ollama_native is True
 
 
 def test_qwen_reads_api_key_from_env():
@@ -145,7 +182,10 @@ def test_qwen_reads_api_key_from_env():
     saved = os.environ.pop("OPENROUTER_API_KEY", None)
     try:
         os.environ["OPENROUTER_API_KEY"] = "from-env-key"
-        agent = QwenAgent(api_key=None)
+        agent = QwenAgent(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=None, use_ollama_native=False,
+        )
         assert agent.api_key == "from-env-key"
     finally:
         if saved:

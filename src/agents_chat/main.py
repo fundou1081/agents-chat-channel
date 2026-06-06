@@ -55,33 +55,27 @@ BUILTIN_PERSONAS = {
         emoji="🎩",
         title="项目经理",
         system_prompt=(
-            "你是 PM (项目经理)。\n"
-            "**你不写代码, 你不调任何工具**。\n"
-            "你的唯一职责: 看到 god 的任务邮件 -> 拆解 -> 派活给团队成员 -> 回信汇报。\n"
+            "你是 PM (项目经理) — 唯一职责: 拆任务 + 派活 + 汇报。\n"
             "\n"
-            "团队成员 (recipients 用 id):\n"
-            "- 'zhang-frontend' — 干前端/UI/写 Python 文件的活\n"
-            "- 'li-backend' — 干后端/API/逻辑的活\n"
-            "\n"
-            "**总是** 至少发 1 封派活邮件 + 1 封汇报邮件给 god。\n"
-            "\n"
-            "输出必须包含三部分:\n"
-            "1. thinking: 一句话\n"
-            "2. outgoing_mail: 数组, 至少 2 封 (派活 + 汇报)\n"
-            "3. closed_sessions: 包含原 thread_id\n"
+            "**重要规则**:\n"
+            "1. 你不写代码, 不调任何工具。\n"
+            "2. recipients 字段必须用**真实的 author id**, 不能用 'dev' / 'developer' / 'team':\n"
+            "   - 'zhang-frontend' (前端/UI/写 Python)\n"
+            "   - 'li-backend' (后端/API/逻辑)\n"
+            "3. 总是发 2 封邮件: 1 封派活 + 1 封汇报给原发件人。\n"
+            "4. closed_sessions 包含原 thread_id (从你的 inbox 里的 thread_id)。\n"
+            "5. output 严格 JSON, 字段: thinking / outgoing_mail / closed_sessions / next_status。\n"
             "\n"
             "示例:\n"
-            "{\n"
-            '  "thinking": "这是前端任务, 派给小张",\n'
+            '{\n'
+            '  "thinking": "这是 UI 任务, 派给 zhang-frontend",\n'
             '  "outgoing_mail": [\n'
-            '    {"recipients": ["zhang-frontend"], "thread_id": "<原 thread_id>", "in_reply_to": "<原 mail_id>", "subject": "[子任务] hello.py", "body": "请写 hello.py...", "priority": 5, "requires_ack": false},\n'
-            '    {"recipients": ["<原发件人>"], "thread_id": "<原 thread_id>", "in_reply_to": "<原 mail_id>", "subject": "Re: <原 subject>", "body": "已派活给小张,他会写文件", "priority": 5, "requires_ack": false}\n'
+            '    {"recipients": ["zhang-frontend"], "thread_id": "T-128", "in_reply_to": "m-original-id", "subject": "[子任务] hello.py", "body": "请写 hello.py", "priority": 5, "requires_ack": false},\n'
+            '    {"recipients": ["god"], "thread_id": "T-128", "in_reply_to": "m-original-id", "subject": "Re: 任务", "body": "已派活", "priority": 5, "requires_ack": false}\n'
             '  ],\n'
-            '  "closed_sessions": ["<原 thread_id>"],\n'
+            '  "closed_sessions": ["T-128"],\n'
             '  "next_status": "working"\n'
-            "}\n"
-            "\n"
-            "**重要**: 不要调任何工具 (write, bash, read 都不要), 直接输出 JSON 决策即可。"
+            '}\n'
         ),
         workdir=f"{WORKDIR_BASE}/pm",
         heartbeat_seconds=15,
@@ -140,8 +134,10 @@ def _make_llm(args) -> object:
         return OpenCodeAgent(model=model, timeout_seconds=180)
     elif backend == "qwen":
         from .llm.qwen import QwenAgent
-        model = getattr(args, "model", None) or "qwen/qwen3-coder:free"
-        return QwenAgent(model=model, timeout_seconds=120)
+        model = getattr(args, "model", None) or "minimax-m2.5:cloud"
+        # 本地 ollama daemon (默认), 不需 key
+        base_url = getattr(args, "base_url", None) or "http://localhost:11434"
+        return QwenAgent(model=model, base_url=base_url, timeout_seconds=120)
     else:
         raise ValueError(f"Unknown LLM backend: {backend}")
 
@@ -290,12 +286,14 @@ def cli():
     p_demo = sub.add_parser("demo", help="Run end-to-end demo (no web)")
     p_demo.add_argument("--llm", choices=["mock", "opencode", "qwen"], default="mock")
     p_demo.add_argument("--model", default=None, help="model id (opencode / qwen)")
+    p_demo.add_argument("--base-url", default=None, help="API base url (qwen)")
     p_demo.add_argument("--duration", type=int, default=90, help="demo duration seconds")
 
     p_web = sub.add_parser("web", help="Start web UI")
     p_web.add_argument("--port", type=int, default=7331)
     p_web.add_argument("--llm", choices=["mock", "opencode", "qwen"], default="mock")
     p_web.add_argument("--model", default=None, help="model id (opencode / qwen)")
+    p_web.add_argument("--base-url", default=None, help="API base url (qwen)")
 
     p_send = sub.add_parser("send", help="Send a mail to an author")
     p_send.add_argument("--to", required=True, help="Recipient author id")
@@ -305,6 +303,7 @@ def cli():
     p_status = sub.add_parser("status", help="One-shot status of all authors")
     p_status.add_argument("--llm", choices=["mock", "opencode", "qwen"], default="mock")
     p_status.add_argument("--model", default=None)
+    p_status.add_argument("--base-url", default=None)
 
     args = parser.parse_args()
     cmd_map = {
