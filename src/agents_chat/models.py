@@ -1,11 +1,5 @@
 """
-核心数据模型: Mail, Session, Author, Persona, Decision
-
-设计原则:
-- Mail 是不可变消息 (frozen)
-- Session 是 mutable state,但由 author 独占修改
-- Author 是长生命周期对象,跨多个 session 和 tick
-- Decision 是 tick 后的 LLM 决策输出
+核心数据模型: Mail, Session, Author, Persona, Decision, Post, Channel
 """
 
 from __future__ import annotations
@@ -18,7 +12,7 @@ from typing import Any, Literal
 
 
 # ============================================================================
-# Mail
+# Mail (点对点消息, 已存在)
 # ============================================================================
 
 
@@ -31,42 +25,18 @@ class MailPriority(int, Enum):
 
 @dataclass(frozen=True)
 class Mail:
-    """一封邮件 = 一条异步消息"""
-
     id: str
-    sender: str                       # "god" | "pm" | "zhang-frontend"
-    recipients: tuple[str, ...]       # 收件人列表
-    thread_id: str                    # 同一 thread 共享 id
-    in_reply_to: str | None = None    # 上一封邮件 id
+    sender: str
+    recipients: tuple[str, ...]
+    thread_id: str
+    in_reply_to: str | None = None
     subject: str = ""
     body: str = ""
     attachments: tuple[dict, ...] = ()
     priority: int = MailPriority.NORMAL
-    requires_ack: bool = False        # 是否需要 ack
+    requires_ack: bool = False
     created_at: datetime = field(default_factory=datetime.now)
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    @classmethod
-    def new(
-        cls,
-        sender: str,
-        recipients: list[str],
-        subject: str,
-        body: str,
-        thread_id: str | None = None,
-        in_reply_to: str | None = None,
-        **kwargs,
-    ) -> "Mail":
-        return cls(
-            id=str(uuid.uuid4())[:12],
-            sender=sender,
-            recipients=tuple(recipients),
-            thread_id=thread_id or str(uuid.uuid4())[:8],
-            in_reply_to=in_reply_to,
-            subject=subject,
-            body=body,
-            **kwargs,
-        )
+    metadata: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -101,9 +71,22 @@ class Mail:
             metadata=d.get("metadata", {}),
         )
 
+    @classmethod
+    def new(cls, sender, recipients, subject, body, thread_id=None, in_reply_to=None, **kwargs):
+        return cls(
+            id=str(uuid.uuid4())[:12],
+            sender=sender,
+            recipients=tuple(recipients),
+            thread_id=thread_id or str(uuid.uuid4())[:8],
+            in_reply_to=in_reply_to,
+            subject=subject,
+            body=body,
+            **kwargs,
+        )
+
 
 # ============================================================================
-# Session (author 内部的并行会话)
+# Session
 # ============================================================================
 
 
@@ -112,17 +95,15 @@ SessionStatus = Literal["active", "blocked", "completed", "stalled"]
 
 @dataclass
 class SessionContext:
-    """一个 author 内部的一个会话 (类似人脑子里一个 thread)"""
-
     thread_id: str
-    topic: str                        # 会话主题,LLM 可见
+    topic: str
     status: SessionStatus = "active"
     participants: set[str] = field(default_factory=set)
-    history_ids: list[str] = field(default_factory=list)  # mail ids,按时间序
+    history_ids: list[str] = field(default_factory=list)
     blocked_reason: str | None = None
     last_activity: datetime = field(default_factory=datetime.now)
     created_at: datetime = field(default_factory=datetime.now)
-    summary: str = ""                 # 压缩的会话摘要
+    summary: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -139,41 +120,103 @@ class SessionContext:
 
 
 # ============================================================================
-# Author Status
+# Post (新 - 合并 Bulletin + FreeChat)
 # ============================================================================
 
 
-AuthorStatus = Literal[
-    "idle",        # 没事干,睡觉
-    "thinking",    # 正在 LLM 调用
-    "working",     # 在执行任务 (读文件 / 跑命令)
-    "blocked",     # 等别人回复
-    "stalled",     # 异常,等上帝/PM 介入
-    "off_duty",    # 下班,低频 heartbeat
-]
+PostKind = Literal["broadcast", "task", "discussion", "freechat"]
+PostStatus = Literal["open", "claimed", "closed", "expired"]
+
+
+@dataclass
+class Post:
+    """统一 Posts 抽象 (方案 B).
+
+    kind:
+      - "broadcast":  公告, 永久, role 匹配或 all
+      - "task":       无主任务, 认领机制
+      - "discussion": 讨论, mention 匹配
+      - "freechat":   临时, max_rounds / expires_at / session_id
+    """
+
+    id: str
+    kind: str                                # "broadcast" | "task" | "discussion" | "freechat"
+    title: str = ""
+    body: str = ""
+    posted_by: str = "god"
+    posted_at: str = ""
+    tags: list[str] = field(default_factory=list)
+    required_role: str = ""                   # task 才有
+    claimed_by: str = ""                      # task 才有
+    status: str = "open"                      # "open" | "claimed" | "closed" | "expired"
+    expires_at: str = ""                      # freechat TTL
+    max_rounds: int = 0                       # freechat 才有 (10)
+    current_round: int = 0                    # freechat 计数
+    session_id: str = ""                      # freechat 关联 session
+    last_activity_at: str = ""                # freechat idle 判定
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Post":
+        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
 
 
 # ============================================================================
-# Persona (author 的身份 + 配置)
+# Channel (新 - 持久主题频道)
+# ============================================================================
+
+
+@dataclass
+class Channel:
+    """持久公共频道 (Slack style)."""
+    id: str
+    name: str                                # "#frontend", "#random"
+    description: str = ""
+    created_by: str = "god"
+    created_at: str = ""
+    is_public: bool = True                    # True=自由加入, False=邀请制
+    pinned_topic: str = ""                    # 置顶话题
+    members: list[str] = field(default_factory=list)  # 缓存 (实际存 channel_members)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
+class ChannelMessage:
+    """频道里的一条消息."""
+    id: str
+    channel_id: str
+    sender: str
+    body: str
+    posted_at: str
+    reply_to: str | None = None               # thread 模式
+    mentions: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+# ============================================================================
+# Persona
 # ============================================================================
 
 
 @dataclass
 class Persona:
-    """一个 author 的身份和配置"""
-
-    id: str                           # "zhang-frontend"
-    display_name: str                 # "小张"
+    id: str
+    display_name: str
     emoji: str = "🤖"
-    title: str = ""                   # "前端工程师"
-    system_prompt: str = ""           # 给 LLM 的 system prompt
+    title: str = ""
+    system_prompt: str = ""
     workdir: str = "/tmp"
-    heartbeat_seconds: int = 30       # 平时心跳间隔
-    sleep_hours: tuple[int, int] | None = (9, 22)  # 工时 (开始, 结束), None = 24/7
-    off_duty_interval: int = 600      # 下班时心跳间隔
-    # LLM 后端配置
-    llm_backend: str = "mock"         # "mock" | "qwen" | "opencode"
-    llm_model: str | None = None      # 后端的具体 model (None 用默认)
+    heartbeat_seconds: int = 30
+    sleep_hours: tuple[int, int] | None = (9, 22)
+    off_duty_interval: int = 600
+    llm_backend: str = "mock"
+    llm_model: str | None = None
 
     @property
     def is_on_duty(self) -> bool:
@@ -183,38 +226,53 @@ class Persona:
         start, end = self.sleep_hours
         if start < end:
             return start <= h < end
-        else:  # 跨午夜 (e.g., 22-6)
-            return h >= start or h < end
+        return h >= start or h < end
 
 
 # ============================================================================
-# Decision (tick 后 LLM 的输出)
+# Author Status
+# ============================================================================
+
+
+AuthorStatus = Literal[
+    "idle", "thinking", "working", "blocked", "stalled", "off_duty",
+]
+
+
+# ============================================================================
+# Decision
 # ============================================================================
 
 
 @dataclass
 class Action:
-    """author 在 tick 中要执行的动作"""
-
-    type: Literal["think", "use_tool", "send_mail", "wait", "complete_session"]
+    type: str
     payload: dict = field(default_factory=dict)
 
 
 @dataclass
 class Decision:
-    """一次 LLM 调用的输出"""
-
-    thinking: str = ""                # LLM 的思考
+    thinking: str = ""
     actions: list[Action] = field(default_factory=list)
     outgoing_mail: list[Mail] = field(default_factory=list)
     closed_sessions: list[str] = field(default_factory=list)
     next_status: AuthorStatus = "idle"
-    raw_response: str = ""            # debug 用
+    raw_response: str = ""
 
     @classmethod
     def from_dict(cls, d: dict) -> "Decision":
         actions = [Action(**a) for a in d.get("actions", [])]
-        mail = [Mail.from_dict(m) for m in d.get("outgoing_mail", [])]
+        mail = []
+        for m in d.get("outgoing_mail", []):
+            if "sender" in m and isinstance(m.get("recipients"), list):
+                mail.append(Mail.from_dict(m))
+            else:
+                # 兼容没有 sender 的 (sender 强制为 author)
+                m2 = dict(m)
+                m2["recipients"] = m2.get("recipients", [])
+                m2.setdefault("thread_id", str(uuid.uuid4())[:8])
+                m2.setdefault("in_reply_to", None)
+                mail.append(Mail.from_dict(m2))
         return cls(
             thinking=d.get("thinking", ""),
             actions=actions,
@@ -226,69 +284,19 @@ class Decision:
 
 
 # ============================================================================
-# Announcement (主动任务板)
-# ============================================================================
-
-
-@dataclass
-class Announcement:
-    """中央信息: 公告/广播/无主任务. 作者主动扫的.
-
-    kind:
-      - "broadcast": 公告, 给所有人看 (e.g. 团队公告, 周会通知)
-      - "unassigned_task": 无主任务, 任何匹配角色的人可 claim
-      - "discussion": 讨论, mentions 的人会看到
-    """
-
-    id: str
-    kind: str                                # "broadcast" | "unassigned_task" | "discussion"
-    title: str
-    body: str
-    posted_by: str                            # 谁发的 (e.g. "god", "pm")
-    posted_at: str                            # ISO timestamp
-    tags: list[str] = field(default_factory=list)  # 关键词标签
-    required_role: str = ""                   # "frontend" | "backend" | "any" | "pm" | ""
-    claimed_by: str = ""                      # 谁认领了
-    status: str = "open"                      # "open" | "claimed" | "closed" | "expired"
-    expires_at: str = ""                      # ISO timestamp, "" = 永不过期
-    thread_id: str = ""                       # 关联的邮件 thread (可选)
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, d: dict) -> "Announcement":
-        return cls(
-            id=d["id"],
-            kind=d["kind"],
-            title=d.get("title", ""),
-            body=d.get("body", ""),
-            posted_by=d.get("posted_by", "god"),
-            posted_at=d.get("posted_at", ""),
-            tags=d.get("tags", []),
-            required_role=d.get("required_role", ""),
-            claimed_by=d.get("claimed_by", ""),
-            status=d.get("status", "open"),
-            expires_at=d.get("expires_at", ""),
-            thread_id=d.get("thread_id", ""),
-        )
-
-
-# ============================================================================
-# TickContext (tick 时的状态快照, 给 LLM 看)
+# TickContext
 # ============================================================================
 
 
 @dataclass
 class TickContext:
-    """一次 tick 时,author 看到的所有信息"""
-
     persona: Persona
-    new_mail: list[Mail]                          # 新邮件
-    active_sessions: list[SessionContext]         # 所有 active session
-    recent_own_activities: list[str] = field(default_factory=list)  # 最近自己的动作
-    memory_recall: list[str] = field(default_factory=list)          # 从 long-term 召回的
-    bulletins: list[Announcement] = field(default_factory=list)     # 中央信息: 跟 author 相关的公告/无主任务
+    new_mail: list[Mail] = field(default_factory=list)
+    active_sessions: list[SessionContext] = field(default_factory=list)
+    recent_own_activities: list[str] = field(default_factory=list)
+    memory_recall: list[str] = field(default_factory=list)
+    posts: list[Post] = field(default_factory=list)                    # 中央 Posts (pull)
+    channel_messages: list[ChannelMessage] = field(default_factory=list)  # 订阅频道 (push)
 
     def to_prompt_dict(self) -> dict:
         return {
@@ -299,7 +307,8 @@ class TickContext:
             },
             "new_mail": [m.to_dict() for m in self.new_mail],
             "active_sessions": [s.to_dict() for s in self.active_sessions],
-            "bulletins": [b.to_dict() for b in self.bulletins],
+            "posts": [p.to_dict() for p in self.posts],
+            "channel_messages": [c.to_dict() for c in self.channel_messages],
             "recent_activities": self.recent_own_activities[:10],
             "memory_recall": self.memory_recall,
         }

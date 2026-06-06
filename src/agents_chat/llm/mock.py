@@ -1,218 +1,98 @@
 """
-Mock LLM. Echoes back sensible decisions based on simple rules.
+MockLLM: 规则-based 决策生成.
 
-Real LLMs (Claude Code, OpenCode) will replace this.
-Interface:
-  async def think(system: str, user: str, ctx: TickContext | None = None) -> Decision
-  Returns a Decision object directly (not raw JSON string).
+接口跟 QwenAgent / OpenCodeAgent 一样, 但不调真实 LLM.
 """
 
 from __future__ import annotations
 
-import json
-import re
 import uuid
 from datetime import datetime
 from typing import Any
 
-from ..models import Decision, Mail, TickContext
+from ..models import Action, Decision, Mail, Post, ChannelMessage, TickContext
+from ..author.routing import RECIPIENT_ALIASES
 
 
 class MockLLM:
-    """A rule-based mock that makes plausible decisions."""
-
     async def think(
-        self,
-        system: str,
-        user: str,
-        ctx: TickContext | None = None,
-        tools: list[dict] | None = None,
+        self, system: str, user: str, ctx: TickContext | None = None, tools: list[dict] | None = None,
     ) -> Decision:
-        """Return a Decision object."""
-        # 优先用 ctx (结构化), fallback 解析 user prompt
-        if ctx is not None:
-            new_mail_dicts = [
-                {
-                    "id": m.id, "sender": m.sender, "subject": m.subject,
-                    "body": m.body, "thread_id": m.thread_id,
-                    "priority": m.priority, "requires_ack": m.requires_ack,
-                }
-                for m in ctx.new_mail
-            ]
-            active_sessions = ctx.active_sessions
-            persona = ctx.persona
-        else:
-            # fallback: 从 system 提取 persona
-            persona_match = re.search(r"你是([^,，。\n]+)", system)
-            persona_name = persona_match.group(1).strip() if persona_match else "agent"
-            persona = None
-            new_mail_dicts = self._extract_mail_from_user(user)
-            active_sessions = []
+        if ctx is None:
+            return Decision(thinking="no ctx", next_status="idle")
 
-        return self._decide(new_mail_dicts, active_sessions, persona)
-
-    def _decide(
-        self,
-        new_mail: list[dict],
-        active_sessions: list,
-        persona: Any | None,
-    ) -> Decision:
-        persona_id = persona.id if persona else "agent"
-        persona_name = persona.display_name if persona else "agent"
+        new_mail = ctx.new_mail
+        posts = ctx.posts
+        channel_msgs = ctx.channel_messages
+        persona = ctx.persona
 
         outgoing: list[Mail] = []
-        actions: list[dict] = []
+        actions: list[Action] = []
         closed: list[str] = []
         thinking_parts: list[str] = []
 
-        if not new_mail and not active_sessions:
-            return Decision(
-                thinking="没事干,继续 idle",
-                next_status="idle",
-            )
-
+        # 处理邮件
         for m in new_mail:
-            subject = m.get("subject", "")
-            sender = m.get("sender", "")
-            body = m.get("body", "")
-            thread_id = m.get("thread_id", "")
-
-            # PM 特殊逻辑: 收到 god 的任务,拆给 zhang 和 li
-            if persona_id == "pm" and sender == "god" and self._looks_like_task(body):
-                thinking_parts.append(f"拆解任务并派活给团队")
-                # 派给 zhang
-                outgoing.append(Mail(
-                    id=str(uuid.uuid4())[:12],
-                    sender=persona_id,
-                    recipients=("zhang-frontend",),
-                    thread_id=str(uuid.uuid4())[:8],  # 派活是新 thread
-                    in_reply_to=None,
-                    subject=f"[子任务] 前端: 用户登录页",
-                    body=f"请实现用户登录页 UI。\n\n详细需求:\n{body[:200]}",
-                    priority=5,
-                    created_at=datetime.now(),
-                ))
-                # 派给 li
-                outgoing.append(Mail(
-                    id=str(uuid.uuid4())[:12],
-                    sender=persona_id,
-                    recipients=("li-backend",),
-                    thread_id=str(uuid.uuid4())[:8],  # 派活是新 thread
-                    in_reply_to=None,
-                    subject=f"[子任务] 后端: Auth API",
-                    body=f"请实现 /api/auth (login/logout) 接口。\n\n详细需求:\n{body[:200]}",
-                    priority=5,
-                    created_at=datetime.now(),
-                ))
-                # 汇报给 god
-                outgoing.append(Mail(
-                    id=str(uuid.uuid4())[:12],
-                    sender=persona_id,
-                    recipients=(sender,),
-                    thread_id=thread_id,
-                    in_reply_to=m.get("id"),
-                    subject=f"Re: {subject}" if subject else "Re: 任务",
-                    body=f"已拆解,派给前端 (小张) + 后端 (小李),预计并行完成。",
-                    priority=5,
-                    created_at=datetime.now(),
-                ))
-                continue
+            subject = m.subject
+            sender = m.sender
+            body = m.body
+            thread_id = m.thread_id
 
             if self._looks_like_task(body) or self._looks_like_task(subject):
-                # 任务 → 模拟执行
-                thinking_parts.append(f"收到 {sender} 的任务: {subject}")
                 outgoing.append(Mail(
-                    id=str(uuid.uuid4())[:12],
-                    sender=persona_id,
-                    recipients=(sender,),
-                    thread_id=thread_id,
-                    in_reply_to=m.get("id"),
-                    subject=f"Re: {subject}" if subject else "",
-                    body=f"收到任务。我开始处理:\n\n{body[:200]}\n\n[{persona_name} 在思考中...]",
-                    priority=5,
-                    created_at=datetime.now(),
+                    id=str(uuid.uuid4())[:12], sender=persona.id,
+                    recipients=(sender,), thread_id=thread_id, in_reply_to=m.id,
+                    subject=f"Re: {subject}" if subject else "", body=body[:200],
+                    priority=5, created_at=datetime.now(),
                 ))
-                actions.append({
-                    "type": "use_tool",
-                    "payload": {"tool": "think", "input": f"分析任务: {subject}"},
-                })
-            elif m.get("requires_ack"):
-                thinking_parts.append(f"ack {sender}")
+                actions.append(Action(type="use_tool", payload={"tool": "write", "input": f"task {subject}"}))
+            elif m.requires_ack:
                 outgoing.append(Mail(
-                    id=str(uuid.uuid4())[:12],
-                    sender=persona_id,
-                    recipients=(sender,),
-                    thread_id=thread_id,
-                    in_reply_to=m.get("id"),
+                    id=str(uuid.uuid4())[:12], sender=persona.id,
+                    recipients=(sender,), thread_id=thread_id, in_reply_to=m.id,
                     subject=f"Re: {subject}" if subject else "",
-                    body=f"已收到, ack 一下。\n— {persona_name}",
-                    priority=5,
-                    created_at=datetime.now(),
+                    body=f"已收到, ack 一下。\n— {persona.display_name}",
+                    priority=5, created_at=datetime.now(),
                 ))
-                # 关闭这个 session
                 closed.append(thread_id)
             else:
-                thinking_parts.append(f"回复 {sender}")
                 outgoing.append(Mail(
-                    id=str(uuid.uuid4())[:12],
-                    sender=persona_id,
-                    recipients=(sender,),
-                    thread_id=thread_id,
-                    in_reply_to=m.get("id"),
+                    id=str(uuid.uuid4())[:12], sender=persona.id,
+                    recipients=(sender,), thread_id=thread_id, in_reply_to=m.id,
                     subject=f"Re: {subject}" if subject else "",
-                    body=f"收到 ({sender}):\n\n{body[:200]}\n\n— {persona_name}",
-                    priority=5,
-                    created_at=datetime.now(),
+                    body=f"收到 ({sender}):\n\n{body[:200]}\n\n— {persona.display_name}",
+                    priority=5, created_at=datetime.now(),
                 ))
 
-        # 状态决定
-        if actions:
-            next_status = "working"
-        elif outgoing and any(self._looks_like_task(m.get("body", "")) or self._looks_like_task(m.get("subject", "")) for m in new_mail):
-            next_status = "working"
-        elif active_sessions:
+        # 处理 posts (公告/任务/讨论/临时聊天)
+        for p in posts:
+            if p.kind == "task" and not p.claimed_by and p.required_role in ("", "any") or \
+               p.required_role.lower() in persona.title.lower():
+                actions.append(Action(type="claim_post", payload={"id": p.id}))
+                thinking_parts.append(f"claimed task {p.id}")
+            elif p.kind == "broadcast":
+                # 主动回个简单反应 (如果需要)
+                pass
+
+        # 处理 channel 消息 (简单 echo)
+        ch_actions: list[Action] = []
+        for m in channel_msgs:
+            ch_actions.append(Action(type="post_channel_message", payload={
+                "channel_id": m.channel_id,
+                "body": f"Re: {m.body[:50]}",
+            }))
+
+        next_status = "working" if outgoing or actions or ch_actions else "idle"
+        if posts and not outgoing and not actions:
             next_status = "blocked"
-        else:
-            next_status = "idle"
-
-        # 防死循环: 如果一个 thread 已经 5 轮以上了, 主动关掉
-        thread_reply_count: dict[str, int] = {}
-        for s in active_sessions:
-            tid = getattr(s, 'thread_id', None) or s.get('thread_id', '')
-            n = len(getattr(s, 'history_ids', []) or s.get('history_ids', []))
-            thread_reply_count[tid] = n
-
-        # 过沣 outgoing: 如果某封发出去的 thread 已经 5+ 轮, 不发, 反而关闭
-        filtered_outgoing = []
-        for m in outgoing:
-            n = thread_reply_count.get(m.thread_id, 0)
-            if n >= 5:
-                # 主动关掉这个 session
-                if m.thread_id not in closed:
-                    closed.append(m.thread_id)
-            else:
-                filtered_outgoing.append(m)
-        outgoing = filtered_outgoing
-
-        if closed and not outgoing:
-            thinking_parts.append(f"关闭 {len(closed)} 个完成的 session")
 
         return Decision(
-            thinking=" | ".join(thinking_parts) or f"看到 {len(new_mail)} 邮件",
-            actions=[self._mk_action(a) for a in actions],
+            thinking=" | ".join(thinking_parts) or f"看了 {len(new_mail)} 邮件 + {len(posts)} posts + {len(channel_msgs)} 频道消息",
+            actions=actions + ch_actions,
             outgoing_mail=outgoing,
             closed_sessions=closed,
             next_status=next_status,
         )
-
-    def _mk_action(self, a_dict: dict):
-        from ..models import Action
-        return Action(**a_dict)
-
-    def _extract_mail_from_user(self, user: str) -> list[dict]:
-        """从 user prompt 中 regex 抽取 new_mail (作为 fallback)."""
-        # 简单版: 不解析,返回空
-        return []
 
     def _looks_like_task(self, text: str) -> bool:
         if not text:

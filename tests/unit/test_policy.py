@@ -4,12 +4,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from agents_chat.policy import (
-    FreeChatManager,
-    FreeChatSession,
-    NetworkPolicy,
-    RateLimiter,
-)
+from agents_chat.policy import NetworkPolicy, RateLimiter, FreeChatManager
 
 
 def test_network_policy_defaults():
@@ -70,59 +65,8 @@ async def test_rate_limiter_different_authors(tmp_data_dir):
 
 # ---- FreeChatManager ----
 
-def test_freechat_trigger():
-    fc = FreeChatManager()
-    sess = fc.trigger(topic="周会", started_by="god", authors=["pm", "zhang"])
-    assert sess.topic == "周会"
-    assert sess.started_by == "god"
-    assert sess.participants == ["pm", "zhang"]
-    assert sess.current_round == 0
-    assert sess.status == "active"
-    assert fc.get_active() is sess
 
 
-def test_freechat_record_message():
-    fc = FreeChatManager()
-    fc.trigger("周会", "god", ["pm", "zhang"])
-    still_active = fc.record_message("pm", "大家好")
-    assert still_active
-    sess = fc.get_active()
-    assert sess.current_round == 1
-    assert len(sess.messages) == 1
-    assert sess.messages[0]["author"] == "pm"
 
 
-def test_freechat_max_rounds_ends_session():
-    fc = FreeChatManager(NetworkPolicy(free_chat_max_rounds=3))
-    fc.trigger("t", "god", ["a", "b"])
-    fc.record_message("a", "hi")
-    fc.record_message("b", "hi")
-    # 第 3 轮: 触发 end
-    still_active = fc.record_message("a", "third")
-    assert not still_active
-    assert fc.get_active().status == "ended"
 
-
-def test_freechat_check_idle():
-    fc = FreeChatManager(NetworkPolicy(free_chat_idle_seconds=0))  # 立即 idle
-    fc.trigger("t", "god", ["a"])
-    time.sleep(0.1)
-    ended = fc.check_idle()
-    assert ended
-    assert fc.get_active().status == "ended"
-
-
-def test_freechat_to_dict():
-    fc = FreeChatManager()
-    fc.trigger("周会", "god", ["pm", "zhang"])
-    fc.record_message("pm", "go")
-    d = fc.to_dict()
-    assert d["active"] is True
-    assert d["session"]["topic"] == "周会"
-    assert d["session"]["current_round"] == 1
-
-
-def test_freechat_no_active():
-    fc = FreeChatManager()
-    d = fc.to_dict()
-    assert d["active"] is False
