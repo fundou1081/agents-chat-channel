@@ -1,0 +1,332 @@
+"""
+Author: long-lived agent with inbox + heartbeat + multi-session.
+
+This is the core abstraction. An Author:
+- Has a persistent identity (Persona)
+- Has a Mailbox (SQLite-backed)
+- Has multiple in-flight Sessions
+- Runs a Heartbeat loop: periodically pulls mail, thinks, acts
+- Survives across tasks; not started/stopped per task
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import uuid
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+from ..llm.mock import MockLLM
+from ..models import (
+    AuthorStatus,
+    Decision,
+    Mail,
+    Persona,
+    SessionContext,
+    TickContext,
+)
+from ..storage.mailbox_db import MailboxDB
+from ..storage.session_db import SessionDB
+from .think import decide
+
+
+class Author:
+    """一个长生命周期的 agent (作者)。
+
+    Usage:
+        persona = Persona(id="zhang", display_name="小张", ...)
+        mailbox = MailboxDB("./data/mailbox.db")
+        sessions = SessionDB("./data/sessions.db")
+        llm = MockLLM()
+
+        zhang = Author(persona, mailbox, sessions, llm)
+        await zhang.start()  # 启动 heartbeat loop
+
+        # 在外面给 zhang 发邮件
+        await mailbox.deliver(Mail.new(sender="god", recipients=["zhang"], ...))
+
+        # 30s 内 zhang 会 tick, 处理邮件, 发回复
+    """
+
+    def __init__(
+        self,
+        persona: Persona,
+        mailbox: MailboxDB,
+        sessions: SessionDB,
+        llm: MockLLM,
+        data_dir: str | Path | None = None,
+        registry: "HeartbeatRegistry | None" = None,
+    ):
+        self.persona = persona
+        self.mailbox = mailbox
+        self.sessions_db = sessions
+        self.llm = llm
+        self.data_dir = Path(data_dir) if data_dir else Path("./data")
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.registry = registry  # 用来 burst 其他 author
+
+        # 状态
+        self.status: AuthorStatus = "idle"
+        self.last_tick_at: datetime | None = None
+        self.next_tick_at: datetime | None = None
+        self.total_ticks: int = 0
+        self.total_actions: int = 0
+
+        # 活跃 sessions (cache, 由 _tick 维护)
+        self.sessions: dict[str, SessionContext] = {}
+
+        # 自己的活动 log (短期)
+        self.activity_log: list[dict] = []
+
+        # 控制
+        self._running = False
+        self._heartbeat_task: asyncio.Task | None = None
+        self._new_mail_event: asyncio.Event = asyncio.Event()  # burst trigger
+
+    # ========================================================================
+    # Lifecycle
+    # ========================================================================
+
+    async def start(self):
+        """启动 author。加载状态 + 启动 heartbeat loop。"""
+        if self._running:
+            return
+        # 加载已有 sessions
+        await self._load_sessions()
+        # 计算下次 tick
+        self._schedule_next_tick()
+        # 启动 loop
+        self._running = True
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        print(f"[{self.persona.id}] author started. next_tick={self.next_tick_at}")
+
+    async def stop(self):
+        self._running = False
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
+        print(f"[{self.persona.id}] author stopped.")
+
+    def trigger_immediate_tick(self):
+        """外部触发 (新邮件来了), 不等到下一个 interval。"""
+        self._new_mail_event.set()
+
+    # ========================================================================
+    # Tick & Heartbeat
+    # ========================================================================
+
+    def _interval_for(self) -> int:
+        """根据工时返回心跳间隔 (秒)。"""
+        if self.persona.is_on_duty:
+            return self.persona.heartbeat_seconds
+        else:
+            return self.persona.off_duty_interval
+
+    def _schedule_next_tick(self):
+        interval = self._interval_for()
+        self.next_tick_at = datetime.now() + timedelta(seconds=interval)
+
+    async def _heartbeat_loop(self):
+        """主循环: 等待 → tick → 等待 → tick → ..."""
+        while self._running:
+            # 等待: 直到 next_tick 或 burst event
+            now = datetime.now()
+            if self.next_tick_at and now < self.next_tick_at:
+                wait_seconds = (self.next_tick_at - now).total_seconds()
+                try:
+                    await asyncio.wait_for(
+                        self._new_mail_event.wait(), timeout=wait_seconds
+                    )
+                    self._new_mail_event.clear()
+                    print(f"[{self.persona.id}] ⚡ burst tick")
+                except asyncio.TimeoutError:
+                    pass
+            # 跑一次 tick
+            try:
+                print(f"[{self.persona.id}] ▶ tick #{self.total_ticks + 1}")
+                await self._tick()
+                print(f"[{self.persona.id}] ✓ tick done, next in {self._interval_for()}s")
+            except Exception as e:
+                import traceback
+                print(f"[{self.persona.id}] tick error: {e}")
+                traceback.print_exc()
+                self.status = "stalled"
+            # 安排下次
+            self._schedule_next_tick()
+
+    async def _tick(self):
+        """一次心跳: 拉邮件 → 处理 sessions → LLM 决策 → 行动。"""
+        self.total_ticks += 1
+        self.last_tick_at = datetime.now()
+        self.status = "thinking"
+
+        # 1. 拉新邮件
+        new_mail = await self.mailbox.fetch_unread(
+            owner=self.persona.id,
+            since=datetime(1970, 1, 1),  # 全部未读
+            limit=50,
+        )
+
+        # 2. 更新 sessions (新邮件进对应 session)
+        for m in new_mail:
+            await self._absorb_mail(m)
+
+        # 3. 重新加载 active sessions
+        await self._load_sessions()
+
+        # 4. 构造 TickContext
+        ctx = TickContext(
+            persona=self.persona,
+            new_mail=new_mail,
+            active_sessions=list(self.sessions.values()),
+            recent_own_activities=[a.get("summary", "") for a in self.activity_log[-20:]],
+        )
+
+        # 5. LLM 决策
+        if not new_mail and not self.sessions:
+            self.status = "idle"
+            return
+
+        decision = await decide(ctx, self.llm)
+
+        # 6. 执行决策
+        await self._execute(decision, new_mail)
+
+        # 7. 标记已读
+        if new_mail:
+            await self.mailbox.mark_read([m.id for m in new_mail])
+
+        # 8. 更新 activity log
+        self.activity_log.append({
+            "ts": datetime.now().isoformat(),
+            "summary": decision.thinking[:200],
+            "status": decision.next_status,
+            "n_new_mail": len(new_mail),
+            "n_sessions": len(self.sessions),
+        })
+        # 只保留最近 100 条
+        self.activity_log = self.activity_log[-100:]
+
+        # 9. 写自己的 tick log 到磁盘
+        await self._write_tick_log(decision, new_mail)
+
+    async def _absorb_mail(self, m: Mail):
+        """把邮件吸进对应的 session。"""
+        sid = m.thread_id
+        if sid not in self.sessions:
+            self.sessions[sid] = SessionContext(
+                thread_id=sid,
+                topic=m.subject or "(无主题)",
+                participants={m.sender, self.persona.id, *m.recipients},
+            )
+        s = self.sessions[sid]
+        s.history_ids.append(m.id)
+        s.last_activity = m.created_at
+        # 如果是 reply,可能 closing
+        if m.requires_ack:
+            s.status = "active"
+        # 持久化
+        await self.sessions_db.upsert(self.persona.id, s)
+
+    async def _execute(self, decision: Decision, new_mail: list[Mail]):
+        """执行 LLM 决策。"""
+        # 发邮件
+        for m in decision.outgoing_mail:
+            # 强制 sender 是自己
+            object.__setattr__(m, 'sender', self.persona.id)
+            await self.mailbox.deliver(m)
+            # Burst 给收件人
+            for r in m.recipients:
+                if r != self.persona.id and self.registry:
+                    other = self.registry.get(r)
+                    if other:
+                        other.trigger_immediate_tick()
+            self.total_actions += 1
+            print(f"  [{self.persona.id}] → mail to {m.recipients}: {m.subject[:40]}")
+
+        # 关闭 sessions
+        for sid in decision.closed_sessions:
+            if sid in self.sessions:
+                self.sessions[sid].status = "completed"
+                await self.sessions_db.upsert(self.persona.id, self.sessions[sid])
+                # 不立刻删,保留记录
+                print(f"  [{self.persona.id}] ✓ session completed: {sid}")
+
+        # 工具调用 (MVP mock: 只记录)
+        for action in decision.actions:
+            if action.type == "use_tool":
+                self.activity_log.append({
+                    "ts": datetime.now().isoformat(),
+                    "summary": f"tool call: {action.payload}",
+                    "kind": "tool",
+                })
+                self.total_actions += 1
+                print(f"  [{self.persona.id}] 🔧 tool: {action.payload}")
+
+        # 状态
+        self.status = decision.next_status
+
+    # ========================================================================
+    # Persistence
+    # ========================================================================
+
+    async def _load_sessions(self):
+        """从 DB 加载所有 sessions 到内存。"""
+        rows = await self.sessions_db.list_all(self.persona.id)
+        self.sessions = {r.thread_id: r for r in rows}
+
+    async def _write_tick_log(self, decision: Decision, new_mail: list[Mail]):
+        """把每次 tick 写到磁盘 (for debug + Web UI)。"""
+        log_path = self.data_dir / f"{self.persona.id}-ticks.jsonl"
+        entry = {
+            "ts": datetime.now().isoformat(),
+            "tick": self.total_ticks,
+            "status_before": "thinking",
+            "status_after": self.status,
+            "n_new_mail": len(new_mail),
+            "n_active_sessions": len(self.sessions),
+            "thinking": decision.thinking,
+            "outgoing_mail_count": len(decision.outgoing_mail),
+            "actions_count": len(decision.actions),
+        }
+        with open(log_path, "a") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    # ========================================================================
+    # Observation (for Web UI)
+    # ========================================================================
+
+    def snapshot(self) -> dict[str, Any]:
+        """供 Web UI 读取的状态快照。"""
+        return {
+            "persona": {
+                "id": self.persona.id,
+                "display_name": self.persona.display_name,
+                "emoji": self.persona.emoji,
+                "title": self.persona.title,
+            },
+            "status": self.status,
+            "is_on_duty": self.persona.is_on_duty,
+            "heartbeat_seconds": self._interval_for(),
+            "last_tick_at": self.last_tick_at.isoformat() if self.last_tick_at else None,
+            "next_tick_at": self.next_tick_at.isoformat() if self.next_tick_at else None,
+            "total_ticks": self.total_ticks,
+            "total_actions": self.total_actions,
+            "active_sessions": [
+                {
+                    "thread_id": s.thread_id,
+                    "topic": s.topic,
+                    "status": s.status,
+                    "blocked_reason": s.blocked_reason,
+                    "n_messages": len(s.history_ids),
+                    "last_activity": s.last_activity.isoformat(),
+                }
+                for s in self.sessions.values()
+                if s.status in ("active", "blocked", "stalled")
+            ],
+        }

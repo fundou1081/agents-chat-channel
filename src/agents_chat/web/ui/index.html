@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>agents-chat-channel</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+  background: #0e1116;
+  color: #e6edf3;
+  margin: 0;
+  padding: 16px;
+}
+h1, h2, h3 { color: #fff; }
+h1 { margin: 0 0 8px; font-size: 24px; }
+h2 { font-size: 18px; margin: 24px 0 12px; }
+.subtitle { color: #7d8590; font-size: 13px; margin-bottom: 24px; }
+
+.row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+@media (max-width: 1000px) { .row { grid-template-columns: 1fr; } }
+
+.card {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 16px;
+}
+.card .header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 12px;
+  border-bottom: 1px solid #21262d;
+  padding-bottom: 12px;
+}
+.card .emoji { font-size: 32px; margin-right: 12px; }
+.card .name { font-size: 18px; font-weight: 600; }
+.card .title { color: #7d8590; font-size: 12px; }
+
+.status-pill {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  margin-left: 8px;
+}
+.status-idle { background: #1f6feb33; color: #58a6ff; }
+.status-thinking { background: #d2992233; color: #d29922; }
+.status-working { background: #238636; color: #fff; }
+.status-blocked { background: #9e6a0333; color: #d29922; }
+.status-stalled { background: #da363333; color: #f85149; }
+.status-off_duty { background: #6e768133; color: #7d8590; }
+
+.metric {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #7d8590;
+  margin: 4px 0;
+}
+.metric span:last-child { color: #e6edf3; font-weight: 600; }
+
+.sessions {
+  margin-top: 12px;
+  font-size: 12px;
+}
+.session {
+  background: #0d1117;
+  border-left: 3px solid #30363d;
+  padding: 6px 10px;
+  margin: 6px 0;
+  border-radius: 4px;
+}
+.session.active { border-left-color: #238636; }
+.session.blocked { border-left-color: #d29922; }
+.session.completed { border-left-color: #6e7681; }
+.session.stalled { border-left-color: #f85149; }
+.session .topic { font-weight: 600; color: #e6edf3; }
+.session .meta { color: #7d8590; font-size: 11px; }
+
+.mailbox {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 12px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+.mail {
+  padding: 8px 0;
+  border-bottom: 1px solid #21262d;
+  font-size: 12px;
+}
+.mail:last-child { border-bottom: none; }
+.mail .from { color: #58a6ff; font-weight: 600; }
+.mail .subject { color: #e6edf3; margin: 2px 0; }
+.mail .body { color: #7d8590; }
+.mail .time { color: #6e7681; font-size: 10px; }
+
+.send-form {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.send-form input, .send-form textarea {
+  width: 100%;
+  background: #0d1117;
+  color: #e6edf3;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin: 4px 0;
+  font-family: inherit;
+  font-size: 13px;
+}
+.send-form button {
+  background: #238636;
+  color: #fff;
+  border: none;
+  padding: 6px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  margin-top: 8px;
+}
+.send-form button:hover { background: #2ea043; }
+
+.dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #238636;
+  margin-right: 4px;
+  animation: pulse 2s infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+</style>
+</head>
+<body>
+<h1>🤖 agents-chat-channel</h1>
+<div class="subtitle">Multi-author agent runtime · Email-model · Self-heartbeat · Live view</div>
+
+<h2>📤 上帝发邮件 (Send Mail as God)</h2>
+<div class="send-form">
+  <input id="send-to" placeholder="to (e.g. pm, zhang-frontend, li-backend)">
+  <input id="send-subject" placeholder="subject">
+  <textarea id="send-body" placeholder="body" rows="3"></textarea>
+  <button onclick="sendMail()">📨 Send</button>
+  <span id="send-status" style="margin-left:12px;font-size:12px;color:#7d8590;"></span>
+</div>
+
+<h2>👥 Authors <span class="dot"></span> <span style="font-size:12px;color:#7d8590;">(auto-refresh 3s)</span></h2>
+<div id="authors" class="row"></div>
+
+<h2>📬 Mailbox (latest 30)</h2>
+<div id="mailbox" class="mailbox"></div>
+
+<script>
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  return r.json();
+}
+
+async function refresh() {
+  const authors = await fetchJSON('/api/authors');
+  const div = document.getElementById('authors');
+  div.innerHTML = authors.map(a => `
+    <div class="card">
+      <div class="header">
+        <div class="emoji">${a.persona.emoji}</div>
+        <div>
+          <div class="name">${a.persona.display_name}<span class="status-pill status-${a.status}">${a.status}</span></div>
+          <div class="title">${a.persona.title} · ${a.persona.id} ${a.is_on_duty ? '🟢 on duty' : '🌙 off duty'}</div>
+        </div>
+      </div>
+      <div class="metric"><span>Heartbeat</span><span>${a.heartbeat_seconds}s</span></div>
+      <div class="metric"><span>Total ticks</span><span>${a.total_ticks}</span></div>
+      <div class="metric"><span>Total actions</span><span>${a.total_actions}</span></div>
+      <div class="metric"><span>Last tick</span><span>${a.last_tick_at ? a.last_tick_at.split('T')[1].slice(0,8) : '-'}</span></div>
+      <div class="metric"><span>Next tick</span><span>${a.next_tick_at ? a.next_tick_at.split('T')[1].slice(0,8) : '-'}</span></div>
+      <div class="sessions">
+        <div style="color:#7d8590;font-size:11px;margin-top:8px;text-transform:uppercase;">Active Sessions (${a.active_sessions.length})</div>
+        ${a.active_sessions.length === 0 ? '<div class="session" style="border-left-color:#6e7681;color:#7d8590;">(none)</div>' : ''}
+        ${a.active_sessions.map(s => `
+          <div class="session ${s.status}">
+            <div class="topic">${s.topic || '(无主题)'}</div>
+            <div class="meta">${s.status} · ${s.n_messages} msgs · ${s.last_activity.split('T')[1].slice(0,8)}</div>
+            ${s.blocked_reason ? `<div class="meta" style="color:#d29922;">⚠ ${s.blocked_reason}</div>` : ''}
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `).join('');
+
+  const mailbox = await fetchJSON('/api/mailbox?limit=30');
+  const mb = document.getElementById('mailbox');
+  mb.innerHTML = mailbox.map(m => `
+    <div class="mail">
+      <div><span class="from">${m.sender}</span> → ${m.recipients.join(', ')} <span style="color:#6e7681;">[${m.created_at.split('T')[1].slice(0,8)}]</span></div>
+      <div class="subject">${m.subject}</div>
+      <div class="body">${m.body}</div>
+      <div class="time">thread: ${m.thread_id} · ${m.read_at ? '✓ read' : '○ unread'}</div>
+    </div>
+  `).join('');
+}
+
+async function sendMail() {
+  const to = document.getElementById('send-to').value;
+  const subject = document.getElementById('send-subject').value;
+  const body = document.getElementById('send-body').value;
+  if (!to || !subject || !body) { alert('fill all'); return; }
+  const r = await fetch('/api/send', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({sender: 'god', to, subject, body, priority: 8, requires_ack: true})
+  });
+  const j = await r.json();
+  document.getElementById('send-status').textContent = '✓ sent: ' + j.mail_id;
+  setTimeout(refresh, 500);
+}
+
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>
