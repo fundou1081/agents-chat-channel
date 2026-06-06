@@ -1,7 +1,20 @@
 # agents-chat-channel
 
-> Multi-author agent runtime. Each agent is a long-lived **Author** with its own
-> inbox, multi-session memory, and autonomous heartbeat. No central orchestrator.
+> **v2.0** — Multi-agent runtime with file-bus (JSONL/JSON), pull-mailbox loop, and
+> pure-program Scanner routing. 详见 [docs/11-v2-architecture.md](docs/11-v2-architecture.md).
+>
+> **v1.1** (deprecated, archived 2026-06-07) — 独立项目在
+> [`~/my_proj/_deprecated/agents-chat-v1/`](../../_deprecated/agents-chat-v1/).
+> 仍是 74 个回归 tests, 但不再维护.
+
+---
+
+# v2.0 (主版本)
+
+> Multi-agent runtime. Each agent is a standalone process bound to an external
+> CLI (qwen/opencode/mock). Communication via file bus (channels JSONL + per-agent
+> mailboxes JSON + per-task locks). Pure-program Scanner routes messages, no central
+> orchestrator, no LLM in the routing path.
 
 ## 核心抽象
 
