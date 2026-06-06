@@ -68,6 +68,32 @@ def derive_task_id_from_content(content: str, ref_msg_id: str = "") -> str:
     return f"task_auto_{h}"
 
 
+def fuzzy_resolve_mention(target: str, candidates: list[str]) -> str | None:
+    """模糊匹配 target 到 candidates 里的 agent_id.
+
+    规则 (优先级从高到低):
+      1. 完全匹配
+      2. target 是 candidate 的 prefix (target="sell", candidate="seller-fish") 
+      3. target 是 candidate 的子串 (target="fish", candidate="seller-fish")
+      4. 多个匹配时: 选**最长**的 candidate (更精确)
+
+    返回匹配到的 agent_id, 无匹配返回 None.
+    """
+    if not target or not candidates:
+        return None
+    if target in candidates:
+        return target  # 精确匹配
+    # prefix / substring 匹配
+    matches = []
+    for c in candidates:
+        if c.startswith(target) or target in c:
+            matches.append(c)
+    if not matches:
+        return None
+    # 选最长的 (更精确)
+    return max(matches, key=len)
+
+
 class Scanner:
     """纯程序路由后台进程."""
 
@@ -152,8 +178,8 @@ class Scanner:
         """路由一条消息.
 
         步骤 (按设计文档 4):
-          1. 解析 mention → 投递到目标邮箱
-          2. 检测 [TASK] → 广播给所有 agent
+          1. 解析 mention → 投递到目标邮箱 (模糊匹配)
+          2. 检测 [TASK] → 广播给频道成员
           3. 检测 STATUS 块 → 更新 state_board
           4. 提取 task_id (content 里有 [TASK task_xxx])
         """
@@ -172,26 +198,42 @@ class Scanner:
         # 1. STATUS 块优先 (不管 mention 都有)
         await self._maybe_update_status(msg)
 
-        # 2. mention 路由
+        # 频道成员 (用于 [TASK] 广播 + mention 范围限制)
+        ch = self.channel(channel_name)
+        members = ch.list_members()
+        # 如果频道没声明成员, fallback 到所有已知 agent
+        if not members:
+            members = self._discover_agents()
+
+        # 2. mention 路由 (模糊匹配)
         if mentions:
             for target in mentions:
                 if target == msg_from:
-                    continue  # 不投递给自己
-                await self._deliver_mail(target, "mention", {
+                    continue
+                # 模糊匹配: target 跟 members / 已知 agents 匹配
+                known = list(set(members + self._discover_agents()))
+                resolved = fuzzy_resolve_mention(target, known)
+                if not resolved:
+                    # 没匹配到任何 agent, 跳过 (避免投递到不存在的邮箱)
+                    continue
+                if resolved == msg_from:
+                    continue
+                await self._deliver_mail(resolved, "mention", {
                     "ref_msg_id": msg_id,
                     "content": content,
                     "channel": channel_name,
                     "task_id": derive_task_id_from_content(content, msg_id),
+                    "extra_mentions": [target],  # 保留原始 mention
                 })
 
-        # 3. [TASK] 广播
+        # 3. [TASK] 广播 — 只发给频道成员
         if _TASK_TAG_RE.search(content):
             task_id = derive_task_id_from_content(content, msg_id)
-            for agent_id in self._discover_agents():
+            for agent_id in members:
                 if agent_id == msg_from:
                     continue
                 # 避免重复: 如果 mention 已经投过, 跳过
-                if agent_id in mentions:
+                if any(fuzzy_resolve_mention(m, [agent_id]) for m in mentions):
                     continue
                 await self._deliver_mail(agent_id, "task_broadcast", {
                     "ref_msg_id": msg_id,
@@ -252,7 +294,27 @@ class Scanner:
         ])
 
     def _is_known_agent(self, agent_id: str) -> bool:
-        return agent_id in self._discover_agents()
+        """判断 agent_id 是不是会发 reply 的 agent (排除 admin).
+
+        admin (频道元数据里 admins 列表) 是发起者, 不发 reply,
+        所以 Scanner 不应该跳过 admin 的消息 (admin 发的是"外部输入", 要正常路由).
+
+        只有 member (不在 admin 列表) 才算 agent, 才会发 reply.
+        """
+        if agent_id not in self._discover_agents():
+            return False
+        # 查所有频道元数据, 提取 admins
+        admins_global: set[str] = set()
+        for ch_path in self.channels_dir.glob("*.jsonl"):
+            meta_path = ch_path.with_suffix(ch_path.suffix + ".meta.json")
+            if meta_path.exists():
+                try:
+                    import json
+                    meta = json.loads(meta_path.read_text())
+                    admins_global.update(meta.get("admins", []))
+                except (json.JSONDecodeError, OSError):
+                    pass
+        return agent_id not in admins_global
 
     def mailbox_of(self, agent_id: str) -> Mailbox:
         return Mailbox(self.mailboxes_dir / f"{agent_id}.json", agent_id)

@@ -146,6 +146,10 @@ class Agent:
     def _build_workspace_md(self) -> str:
         """构造 {cli_name}.md 引导文件内容."""
         md_name = f"{self.cli.name}.md"
+        # 读频道成员信息 (Agent 需要知道"频道里都有谁")
+        ch = self.channel(self.default_channel)
+        members = ch.list_members()
+        admins = ch.list_admins()
         return f"""# {self.agent_id} 角色定义 (v2.0)
 
 你是 **{self.agent_id}**, 在多 agent 协作网络中工作. 本文件由 Agent 启动时自动生成,
@@ -159,6 +163,21 @@ class Agent:
 
 {self.system_prompt or '(无)'}
 
+## 默认频道成员 ({self.default_channel})
+
+{self._format_members(members, admins)}
+
+## 模糊匹配规则 (重要!)
+
+频道里 @mention 你时, Scanner 会做**模糊匹配**:
+- 完全匹配: `@seller` -> seller-fish
+- prefix: `@sell` -> seller-fish
+- 子串: `@fish` -> seller-fish
+- 多个匹配: 选**最长**的 candidate (更精确)
+- **没匹配**: 邮件不投递, 静默忽略
+
+**反面例子**: `@bot` 同时是 "robot" 和 "bot-1" 的 prefix, 选更长的 -> "robot"
+
 ## 工作环境 (相对本文件)
 
 - 频道: `../channels/{{name}}.jsonl` (JSONL, 可读可写)
@@ -166,6 +185,7 @@ class Agent:
 - 我的 session 索引: `../sessions/{self.agent_id}.json` (local → remote 映射)
 - 任务状态板: `../state_board.json` (全局, 只读)
 - 任务锁: `../locks/task_xxx.lock` (5min TTL, mtime 判超时)
+- 频道元数据: `../channels/{{name}}.jsonl.meta.json` (含 members + admins)
 
 ## 工作规则
 
@@ -180,9 +200,10 @@ class Agent:
     confidence: <low|medium|high>
    -->
    ```
-2. **@mention**: reply 里的 `@xxx` 由 Scanner 自动投递 mention 邮件给 xxx
-3. **[TASK] 标记**: 频道消息里的 `[TASK task_xxx]` 会被 Scanner 广播成 task_broadcast
+2. **@mention**: reply 里的 `@xxx` 由 Scanner 模糊匹配 + 投递 mention 邮件
+3. **[TASK] 标记**: 频道消息里的 `[TASK task_xxx]` 会被 Scanner 广播给频道**成员**
 4. **session resume**: 同一 task 多次处理会自动用同一 session_id (本地映射)
+5. **讨价还价 / 多轮对话**: 用 in_reply_to 关联 thread, Scanner 会路由到原 agent
 
 ## 本文件说明
 
@@ -190,6 +211,15 @@ class Agent:
 - CLI ({self.cli.name}) 启动后会自动读本文件作为角色引导
 - 修改本文件不会影响 Agent 行为 (Agent 不读), 但会影响 CLI 行为
 """
+
+    def _format_members(self, members: list[str], admins: list[str]) -> str:
+        if not members:
+            return "(无 - 频道未声明成员, fallback 到所有 agent)"
+        lines = []
+        for m in members:
+            role = " (admin)" if m in admins else ""
+            lines.append(f"- `{m}`{role}")
+        return "\n".join(lines)
 
     # ------------------------------------------------------------------
     # 公共 API

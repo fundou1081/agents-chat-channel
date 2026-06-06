@@ -36,15 +36,81 @@ def _now_iso() -> str:
 
 
 class Channel:
-    """一个频道 (JSONL file)."""
+    """一个频道 (JSONL file + 可选 metadata sidecar).
+
+    Metadata 文件 {name}.meta.json 存成员列表 + admin 列表.
+    成员信息独立于 JSONL 消息, 避免每条消息都重复 members 列表.
+    """
 
     def __init__(self, path: str | Path, name: str = ""):
         self.path = Path(path)
         self.name = name or self.path.stem
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        # touch 一下确保文件存在
+        # metadata sidecar: channels/{name}.meta.json
+        self.meta_path = self.path.with_suffix(self.path.suffix + ".meta.json")
+        # touch JSONL
         if not self.path.exists():
             self.path.touch()
+        # touch metadata
+        if not self.meta_path.exists():
+            self._save_meta({"name": self.name, "members": [], "admins": [], "created_by": "", "created_at": ""})
+
+    # ------------------------------------------------------------------
+    # Metadata (members / admins)
+    # ------------------------------------------------------------------
+
+    def _load_meta(self) -> dict:
+        if not self.meta_path.exists():
+            return {"name": self.name, "members": [], "admins": [], "created_by": "", "created_at": ""}
+        try:
+            import json
+            return json.loads(self.meta_path.read_text("utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return {"name": self.name, "members": [], "admins": [], "created_by": "", "created_at": ""}
+
+    def _save_meta(self, meta: dict):
+        import json, os, tempfile
+        fd, tmp = tempfile.mkstemp(
+            dir=str(self.meta_path.parent),
+            prefix=f".{self.meta_path.name}.",
+            suffix=".tmp",
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(meta, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, self.meta_path)
+        except Exception:
+            try: os.unlink(tmp)
+            except OSError: pass
+            raise
+
+    def add_member(self, agent_id: str) -> bool:
+        """加成员. 返回 True=新增, False=已存在."""
+        meta = self._load_meta()
+        if agent_id in meta.get("members", []):
+            return False
+        meta.setdefault("members", []).append(agent_id)
+        self._save_meta(meta)
+        return True
+
+    def add_admin(self, agent_id: str) -> bool:
+        """加管理员."""
+        meta = self._load_meta()
+        if agent_id in meta.get("members", []):
+            return False  # 需先 add_member
+        meta.setdefault("admins", []).append(agent_id)
+        meta.setdefault("members", []).append(agent_id)
+        self._save_meta(meta)
+        return True
+
+    def list_members(self) -> list[str]:
+        return list(self._load_meta().get("members", []))
+
+    def list_admins(self) -> list[str]:
+        return list(self._load_meta().get("admins", []))
+
+    def is_member(self, agent_id: str) -> bool:
+        return agent_id in self.list_members()
 
     # ------------------------------------------------------------------
     # 写入
