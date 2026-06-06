@@ -2,17 +2,23 @@
 OpenCodeCLI for v2.0 — subprocess 调 opencode CLI.
 
 opencode (https://github.com/sst/opencode) 是 terminal AI agent, 支持
-  - `opencode run "prompt"` — 单次调用
-  - `opencode --session <id> --continue` — resume session
+  - `opencode run "prompt" --model <id>` — 单次调用
+  - `opencode run "prompt" --session <id>` — resume session
+  - `opencode run "prompt" --format json` — 输出 JSONL (每行一个 event)
 
-实现: asyncio.create_subprocess_exec 调 opencode 命令, 捕获 stdout.
+默认 model: `opencode/minimax-m3-free` (opencode Zen 的 free 模型, 不需 key)
 
-注意: opencode CLI 真实接口可能跟假设有出入, 部署时需 adjust 命令行.
-这里写的是 **最可能** 的接口形式, 实际跑前需要 verify.
+实现: asyncio.create_subprocess_exec 调 opencode 命令, 捕获 stdout (JSONL),
+提取 type="text" 的 part 拼成 output_text.
+
+workspace_dir: subprocess 在 workspace_dir 里启动, opencode 启动后会自动读
+./opencode.md (或 AGENTS.md) 作为角色引导 (per-agent <cli_name>.md 模式).
 """
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 import time
 from typing import Optional
 
@@ -25,9 +31,11 @@ class OpenCodeCLI:
     def __init__(
         self,
         binary: str = "opencode",
+        model: str = "opencode/minimax-m3-free",
         timeout_seconds: int = 300,
     ):
         self.binary = binary
+        self.model = model
         self.timeout = timeout_seconds
         self.call_count = 0
 
@@ -39,14 +47,12 @@ class OpenCodeCLI:
         self.call_count += 1
 
         # 构造命令
-        # opencode run "prompt" [--session <id>]
-        cmd = [self.binary, "run", prompt]
+        cmd = [self.binary, "run", prompt, "--model", self.model, "--format", "json"]
         if resume_session:
             cmd.extend(["--session", resume_session])
 
         try:
             # 如果提供 workspace_dir, subprocess 在 workspace_dir 里启动
-            # opencode 启动后会自动读 ./opencode.md (或 AGENTS.md) 作为引导
             kwargs = {}
             if workspace_dir:
                 kwargs["cwd"] = workspace_dir
@@ -78,11 +84,14 @@ class OpenCodeCLI:
                     elapsed_ms=int((time.time() - start) * 1000),
                 )
 
-            # opencode 实际不返回 session id, 我们生成一个
+            # 解析 JSONL, 提取 type="text" 的 part 拼成 output_text
+            output_text = self._extract_text_from_jsonl(stdout)
+
+            # opencode 不直接返回 session id, 我们生成一个
             new_id = None if resume_session else new_session_id("oc")
 
             return CLIResponse(
-                output_text=stdout.strip(),
+                output_text=output_text.strip(),
                 new_session_id=new_id,
                 raw=stdout,
                 elapsed_ms=int((time.time() - start) * 1000),
@@ -99,3 +108,26 @@ class OpenCodeCLI:
                 error=f"opencode exec error: {e}",
                 elapsed_ms=int((time.time() - start) * 1000),
             )
+
+    def _extract_text_from_jsonl(self, stdout: str) -> str:
+        """从 opencode --format json 的输出中提取 type="text" 的 part.
+
+        输出格式: 每行一个 JSON 对象, 含 type 字段. text 类型的 part 含
+        LLM 的实际回复文本. 多个 text part 拼起来.
+        """
+        parts: list[str] = []
+        for line in stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                # 非 JSON 行 (e.g. log noise), 跳过
+                continue
+            # 两种结构: 顶层 type="text" 或 nested 在 part 里
+            if obj.get("type") == "text" and "text" in obj:
+                parts.append(obj["text"])
+            elif "part" in obj and obj["part"].get("type") == "text":
+                parts.append(obj["part"].get("text", ""))
+        return "\n".join(parts) if parts else stdout  # fallback: 原样
