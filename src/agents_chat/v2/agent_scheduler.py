@@ -30,6 +30,7 @@ from typing import Any, Optional
 
 from .cli.base import CLI
 from .communication import CommunicationComponent
+from .files.channel import Channel
 from .files.lock import (
     acquire as lock_acquire,
     is_held_by as lock_is_held_by,
@@ -255,16 +256,29 @@ class AgentScheduler:
     def _build_prompt(
         self, mail: dict, session: Session, task_id: str, topic: str, channel: str,
     ) -> str:
-        """构造给 LLM 的 prompt. 包含 session 上下文 (topic / history / progress)."""
-        # 累积的内容 (从之前 STATUS 块 + summary)
-        history_lines = []
+        """构造给 LLM 的 prompt. 包含:
+          - Session 上下文 (content_summary / progress / next_action)
+          - 频道真实历史 (其他 agent 的真 reply)
+          - 当前轮次 (你之前发了几次)
+          - 严格输出要求 (禁止剧本 / 禁止模拟对方)
+        """
+        # 1. 频道真实历史 (最后 10 条)
+        recent_msgs = self._read_recent_channel(channel, limit=10)
+        history_str = self._format_channel_history(recent_msgs)
+
+        # 2. Session 累积上下文
+        session_lines = []
         if session.content_summary:
-            history_lines.append(f"[之前内容] {session.content_summary}")
+            session_lines.append(f"[之前内容摘要] {session.content_summary}")
         if session.progress:
-            history_lines.append(f"[进度] {session.progress}%")
+            session_lines.append(f"[进度] {session.progress}%")
         if session.next_action:
-            history_lines.append(f"[下一步] {session.next_action}")
-        history_str = "\n".join(history_lines) if history_lines else "(无, 这是新 session)"
+            session_lines.append(f"[之前 next_action] {session.next_action}")
+        session_str = "\n".join(session_lines) if session_lines else "(无, 新 session)"
+
+        # 3. 算自己当前轮次
+        my_rounds = sum(1 for m in recent_msgs if m.get("from") == self.agent_id)
+        next_round = my_rounds + 1
 
         prompt = f"""[System]
 你是 {self.agent_id}.
@@ -272,22 +286,27 @@ class AgentScheduler:
 
 [Session 上下文]
 session_id: {session.session_id}
+remote_session_id: {session.remote_id or "(未建)"}
 topic: {topic}
-progress: {session.progress}%
+{session_str}
+
+[频道 {channel} 真实历史 - 按时间顺序, 含其他 agent 的真回复]
 {history_str}
 
 [Task]
 task_id: {task_id}
 mail_type: {mail.get("type", "")}
 channel: {channel}
+当前轮次: Round {next_round} (这是你作为 {self.agent_id} 的第 {next_round} 轮回复)
 
-[Message]
+[你刚收到的输入]
 {mail.get("content", "")}
 
-[Output 要求]
-- 只回你自己角色, 1 句
-- 禁止模拟对方/写剧本/总结
-- 末尾 STATUS 块:
+[输出要求 - 严格!]
+1. 只回你自己角色, **1 句话** 报价/还价/接受
+2. **禁止** 模拟对方/写剧本/总结整个场景/列历史
+3. **禁止** 在你回复里写 "@xxx:" 这种格式 (会混乱)
+4. 末尾必须有 STATUS 块:
 <!--STATUS
  session_id: {session.session_id}
  task_id: {task_id}
@@ -298,6 +317,25 @@ channel: {channel}
 -->
 """
         return prompt
+
+    def _read_recent_channel(self, channel: str, limit: int = 10) -> list[dict]:
+        """读频道最近 N 条消息. 用 channels_dir 拿 Channel 实例."""
+        if not self.channels_dir:
+            return []
+        ch = Channel(self.channels_dir / f"{channel}.jsonl", channel)
+        return ch.tail(limit)
+
+    def _format_channel_history(self, msgs: list[dict]) -> str:
+        """格式化频道历史给 LLM. 每条截断 200 字符防爆."""
+        if not msgs:
+            return "(频道空, 你先开口)"
+        lines = []
+        for m in msgs:
+            ts = m.get("ts", "")[:19]
+            frm = m.get("from", "?")
+            content = m.get("content", "")[:200].replace("\n", " | ")
+            lines.append(f"  [{ts}] {frm}: {content}")
+        return "\n".join(lines)
 
     def _extract_topic(self, content: str, hint: str = "") -> str:
         """从 content 抓 topic. 优先 hint, 否则前 30 字符."""
