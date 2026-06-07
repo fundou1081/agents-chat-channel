@@ -1,0 +1,424 @@
+"""
+AgentScheduler for v2.0 — 1 个 agent 的决策大脑.
+
+职责 (Decide):
+  听 comms 事件, 决定怎么处理:
+    - mail 事件: 续/新建 session, 构造 prompt, 调 CLI, 更新 session, 写频道
+    - stale_task: 调 LLM 重新生成 STATUS 块 (heartbeat)
+    - active_task: 同 mail 流程 (启动时扫到)
+
+输入: comms.listen() 的 (event_type, event_data)
+输出: 调 sessions + cli + channel.write
+
+跟 SessionManager / CLI / Communication 集成:
+  - 拿 comms 事件
+  - 调 sessions.decide_session() 选 session
+  - 调 cli.execute(session_id, prompt, ws) 调 LLM
+  - 调 sessions.update() 更新 progress / next_action
+  - 写 channel + second-route mentions
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import re
+import time
+import traceback
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Optional
+
+from .cli.base import CLI
+from .communication import CommunicationComponent
+from .files.lock import (
+    acquire as lock_acquire,
+    is_held_by as lock_is_held_by,
+    refresh as lock_refresh,
+    release as lock_release,
+)
+from .files.mailbox import Mailbox
+from .session_manager import Session, SessionManager
+from .state_board import StateBoard
+from .status import parse_status_block
+
+
+logger = logging.getLogger(__name__)
+
+
+# mention 提取
+_MENTION_RE = re.compile(r"@([a-zA-Z][a-zA-Z0-9_-]*)")
+# task 标记
+_TASK_TAG_RE = re.compile(r"\[TASK(?:\s+(task[_-]\w+))?\]", re.IGNORECASE)
+# 默认锁 TTL
+LOCK_TTL_SECONDS = 3600
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def extract_mentions(text: str) -> list[str]:
+    """从文本提取 @mention 列表 (去重, 保持顺序)."""
+    seen = set()
+    result = []
+    for m in _MENTION_RE.findall(text or ""):
+        if m not in seen:
+            seen.add(m)
+            result.append(m)
+    return result
+
+
+def derive_task_id(content: str, ref_msg_id: str = "") -> str:
+    """从 content 抓 task_id. 优先 [TASK task_xxx] 标记, 否则 ref."""
+    m = _TASK_TAG_RE.search(content or "")
+    if m and m.group(1):
+        return m.group(1)
+    if ref_msg_id:
+        return f"task_{ref_msg_id}"
+    import hashlib
+    h = hashlib.md5((content or "").encode()).hexdigest()[:8]
+    return f"task_auto_{h}"
+
+
+class AgentScheduler:
+    """1 个 agent 的决策大脑. 听 comms 事件, 决定怎么处理.
+
+    跟其他 3 组件的关系:
+      - comms (感知): 给我事件
+      - sessions (记忆): 我读/写
+      - cli (执行): 我调
+      - 自身: 决策 (续/新建 session, 解析 STATUS, 写频道)
+    """
+
+    def __init__(
+        self,
+        comms: CommunicationComponent,
+        sessions: SessionManager,
+        cli: CLI,
+        agent_id: str,
+        system_prompt: str = "",
+        workspace_dir: str | Path | None = None,
+        default_channel: str = "general",
+        channels_dir: Path | None = None,
+        lock_dir: Path | None = None,
+    ):
+        self.comms = comms
+        self.sessions = sessions
+        self.cli = cli
+        self.agent_id = agent_id
+        self.system_prompt = system_prompt
+        self.workspace_dir = Path(workspace_dir) if workspace_dir else None
+        self.default_channel = default_channel
+        self.channels_dir = Path(channels_dir) if channels_dir else None
+        self.lock_dir = Path(lock_dir) if lock_dir else None
+
+    # ------------------------------------------------------------------
+    # 主循环
+    # ------------------------------------------------------------------
+
+    async def run(self):
+        """听 comms 事件, 处理."""
+        logger.info(f"[{self.agent_id}] scheduler ▶ run")
+        try:
+            async for event_type, event_data in self.comms.listen():
+                try:
+                    if event_type == "mail":
+                        await self.handle_mail(event_data)
+                    elif event_type == "stale_task":
+                        await self.handle_stale_task(event_data)
+                    elif event_type == "active_task":
+                        # 启动时扫到的 active task: 暂时 noop (等 mail 触发)
+                        pass
+                except Exception as e:
+                    logger.warning(f"[{self.agent_id}] handle {event_type} error: {e}")
+                    traceback.print_exc()
+        except asyncio.CancelledError:
+            pass
+        finally:
+            logger.info(f"[{self.agent_id}] scheduler ⏹ stopped")
+
+    # ------------------------------------------------------------------
+    # 处理 mail
+    # ------------------------------------------------------------------
+
+    async def handle_mail(self, mail: dict):
+        """处理一封邮件. 核心调度逻辑.
+
+        流程:
+          1. 解析 task_id + topic + channel
+          2. 决定续/新建 session
+          3. 构造 prompt
+          4. 调 CLI
+          5. 解析 STATUS, 更新 session
+          6. 写频道
+          7. second-route mentions
+        """
+        content = mail.get("content", "")
+        ref_msg_id = mail.get("ref_msg_id", "")
+        channel = mail.get("channel", self.default_channel)
+        mail_type = mail.get("type", "mention")
+        context_hint = mail.get("context_hint", "")
+        task_id = mail.get("task_id") or derive_task_id(content, ref_msg_id)
+
+        # 1. decide session
+        topic = self._extract_topic(content, context_hint)
+        session, is_new = self.sessions.decide_session(
+            task_id=task_id, topic=topic, channel=channel,
+        )
+        if is_new:
+            logger.info(f"[{self.agent_id}] 🆕 new session {session.session_id} for {topic}")
+        else:
+            logger.info(f"[{self.agent_id}] 🔄 resume session {session.session_id} (progress={session.progress}%)")
+
+        # 2. 构造 prompt
+        prompt = self._build_prompt(mail, session, task_id, topic, channel)
+
+        # 3. 调 CLI
+        try:
+            response = await self.cli.execute(
+                session_id=session.remote_id,  # 续; "" = 新建
+                prompt=prompt,
+                workspace_dir=str(self.workspace_dir) if self.workspace_dir else "",
+            )
+        except Exception as e:
+            logger.warning(f"[{self.agent_id}] CLI exception: {e}")
+            await self._write_cli_error(mail, task_id, channel, str(e))
+            return
+
+        if not response.ok:
+            await self._write_cli_error(mail, task_id, channel, response.error)
+            return
+
+        # 4. 解析 STATUS
+        status = parse_status_block(response.output_text)
+
+        # 5. 更新 session
+        try:
+            self.sessions.update(
+                session.session_id,
+                remote_id=response.new_session_id or session.remote_id,
+                progress=status.progress if status else session.progress,
+                next_action=status.next_action if status else session.next_action,
+                content_delta=status.summary if status else None,
+                status="completed" if (status and status.progress >= 100) else "active",
+                task_id=task_id,
+            )
+        except Exception as e:
+            logger.warning(f"[{self.agent_id}] session update error: {e}")
+
+        # 6. 写频道
+        await self._write_channel_reply(channel, response.output_text, ref_msg_id, task_id)
+
+        # 7. second-route mentions
+        await self._second_route(response.output_text, ref_msg_id, task_id, channel, session.session_id)
+
+    # ------------------------------------------------------------------
+    # 处理 stale task
+    # ------------------------------------------------------------------
+
+    async def handle_stale_task(self, task: dict):
+        """stale task: 调 LLM 重新生成 STATUS 块 (heartbeat)."""
+        task_id = task.get("task_id", "")
+        if not task_id:
+            return
+        # 找这个 task 的 session
+        sessions = self.sessions.list_by_task(task_id)
+        if not sessions:
+            # task 没关联 session, 写一个 default STATUS 报告
+            status = self._default_status_for_task(task)
+            await self._write_status_report(task, status)
+            return
+        session = sessions[0]
+        # 调 LLM 重新生成 STATUS
+        prompt = f"[scheduler] task {task_id} 已 stale ({self.comms.stale_ttl}s 无 heartbeat), 请更新 STATUS 块"
+        try:
+            response = await self.cli.execute(
+                session_id=session.remote_id,
+                prompt=prompt,
+                workspace_dir=str(self.workspace_dir) if self.workspace_dir else "",
+            )
+            if response.ok and response.output_text:
+                # 找 STATUS 块
+                status = parse_status_block(response.output_text)
+                if not status:
+                    status = self._default_status_for_task(task)
+                await self._write_status_report(task, status)
+                # 更新 session
+                self.sessions.touch(task_id=task_id) if hasattr(self.sessions, 'touch') else None
+        except Exception as e:
+            logger.warning(f"[{self.agent_id}] handle_stale_task error: {e}")
+
+    # ------------------------------------------------------------------
+    # 辅助: 构造 prompt
+    # ------------------------------------------------------------------
+
+    def _build_prompt(
+        self, mail: dict, session: Session, task_id: str, topic: str, channel: str,
+    ) -> str:
+        """构造给 LLM 的 prompt. 包含 session 上下文 (topic / history / progress)."""
+        # 累积的内容 (从之前 STATUS 块 + summary)
+        history_lines = []
+        if session.content_summary:
+            history_lines.append(f"[之前内容] {session.content_summary}")
+        if session.progress:
+            history_lines.append(f"[进度] {session.progress}%")
+        if session.next_action:
+            history_lines.append(f"[下一步] {session.next_action}")
+        history_str = "\n".join(history_lines) if history_lines else "(无, 这是新 session)"
+
+        prompt = f"""[System]
+你是 {self.agent_id}.
+{self.system_prompt}
+
+[Session 上下文]
+session_id: {session.session_id}
+topic: {topic}
+progress: {session.progress}%
+{history_str}
+
+[Task]
+task_id: {task_id}
+mail_type: {mail.get("type", "")}
+channel: {channel}
+
+[Message]
+{mail.get("content", "")}
+
+[Output 要求]
+- 只回你自己角色, 1 句
+- 禁止模拟对方/写剧本/总结
+- 末尾 STATUS 块:
+<!--STATUS
+ session_id: {session.session_id}
+ task_id: {task_id}
+ progress: <0-100>
+ summary: <一句话>
+ next_action: <下一步>
+ confidence: high
+-->
+"""
+        return prompt
+
+    def _extract_topic(self, content: str, hint: str = "") -> str:
+        """从 content 抓 topic. 优先 hint, 否则前 30 字符."""
+        if hint:
+            return hint[:50]
+        text = _TASK_TAG_RE.sub("", content or "")
+        text = _MENTION_RE.sub("", text)
+        text = text.strip().split("\n")[0][:50]
+        return text
+
+    # ------------------------------------------------------------------
+    # 辅助: 写频道
+    # ------------------------------------------------------------------
+
+    async def _write_channel_reply(
+        self, channel: str, output_text: str, ref_msg_id: str, task_id: str,
+    ):
+        """把 LLM 的 reply 写到频道."""
+        if not self.channels_dir:
+            return
+        from .files.channel import Channel
+        ch = Channel(self.channels_dir / f"{channel}.jsonl", channel)
+        mentions = extract_mentions(output_text)
+        ch.append(
+            from_=self.agent_id,
+            content=output_text,
+            type="reply",
+            mentions=mentions,
+            ref_msg_id=ref_msg_id,
+            task_id=task_id,
+        )
+
+    async def _write_status_report(self, task: dict, status):
+        """写 status_report 消息到 task 关联的频道."""
+        if not self.channels_dir or not status:
+            return
+        from .files.channel import Channel
+        channel = task.get("channel", self.default_channel)
+        ch = Channel(self.channels_dir / f"{channel}.jsonl", channel)
+        body = (
+            f"<!--STATUS\n"
+            f" session_id: {status.session_id}\n"
+            f" task_id: {status.task_id}\n"
+            f" progress: {status.progress}\n"
+            f" summary: {status.summary}\n"
+            f" next_action: {status.next_action}\n"
+            f" confidence: {status.confidence}\n"
+            f"-->"
+        )
+        ch.append(
+            from_=self.agent_id,
+            content=body,
+            type="status_report",
+            ref_msg_id=task.get("ref_msg_id", ""),
+            task_id=task.get("task_id", ""),
+        )
+
+    async def _write_cli_error(
+        self, mail: dict, task_id: str, channel: str, error: str,
+    ):
+        """CLI 失败: 写错误到频道 + STATUS 块."""
+        if not self.channels_dir:
+            return
+        from .files.channel import Channel
+        ch = Channel(self.channels_dir / f"{channel}.jsonl", channel)
+        body = (
+            f"[{self.agent_id}] CLI 错误: {error}\n\n"
+            f"<!--STATUS\n"
+            f" session_id: local_{self.agent_id}\n"
+            f" task_id: {task_id}\n"
+            f" progress: 0\n"
+            f" summary: {self.agent_id} CLI 调用失败\n"
+            f" next_action: 等待人工介入\n"
+            f" confidence: low\n"
+            f"-->"
+        )
+        ch.append(
+            from_=self.agent_id, content=body, type="reply",
+            ref_msg_id=mail.get("ref_msg_id", ""), task_id=task_id,
+        )
+
+    # ------------------------------------------------------------------
+    # 辅助: second-route
+    # ------------------------------------------------------------------
+
+    async def _second_route(
+        self, reply_text: str, ref_msg_id: str, task_id: str,
+        channel: str, context_hint: str,
+    ):
+        """提取 reply 里的 @mention, 投递 mention 邮件."""
+        if not self.channels_dir:
+            return
+        from .files.channel import Channel
+        from .files.mailbox import Mailbox
+        mentions = [m for m in extract_mentions(reply_text) if m != self.agent_id]
+        for target in mentions:
+            mb_path = self.channels_dir.parent / "mailboxes" / f"{target}.json"
+            if not mb_path.exists():
+                continue
+            mb = Mailbox(mb_path, target)
+            mb.append(
+                ref_msg_id=ref_msg_id,
+                type="mention",
+                content=f"@{target} {self.agent_id} 提到你 (task {task_id})",
+                channel=channel,
+                context_hint=context_hint,
+                extra={"task_id": task_id, "from": self.agent_id},
+            )
+
+    # ------------------------------------------------------------------
+    # 辅助: default status
+    # ------------------------------------------------------------------
+
+    def _default_status_for_task(self, task: dict):
+        """task 没关联 session, 生成默认 STATUS."""
+        from .status import Status
+        return Status(
+            session_id="",
+            task_id=task.get("task_id", ""),
+            progress=task.get("progress", 0),
+            summary=task.get("summary", "stale"),
+            next_action=task.get("next_action", ""),
+            confidence=task.get("confidence", "medium"),
+        )
