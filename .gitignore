@@ -1,36 +1,20 @@
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-*.egg-info/
-.eggs/
-build/
-dist/
+*.pyc
+*.pyo
+
+# Test artifacts
 .pytest_cache/
 .coverage
 htmlcov/
 
-# Virtual envs
-venv/
-.venv/
-env/
+# v2 data (临时, 跑 e2e 时建, 不进 git)
+data_v2/
+/tmp/*_e2e/
 
 # IDE
 .vscode/
 .idea/
-*.swp
-.DS_Store
 
-# Project specific
-data/*.db
-data/*.db-journal
-data/*.db-wal
-data/*.db-shm
-logs/
-*.log
-
-# Local env
-.env
-.env.local
+# v1 archived
+archive/
