@@ -68,8 +68,8 @@ class QwenCLI:
         p = self._history_path(session_id)
         p.write_text(json.dumps(history, ensure_ascii=False, indent=2))
 
-    async def invoke(
-        self, prompt: str, resume_session: Optional[str] = None,
+    async def execute(
+        self, prompt: str, session_id: Optional[str] = None,
         workspace_dir: Optional[str] = None,
     ) -> CLIResponse:
         start = time.time()
@@ -99,14 +99,14 @@ class QwenCLI:
                 )
 
         # 决定 session id
-        if resume_session:
-            session_id = resume_session
+        if session_id:
+            session_id = session_id
         else:
             session_id = new_session_id("qwen")
 
         # 构造 messages (含 history 模拟 resume)
         messages: list[dict] = []
-        if self.history_dir and resume_session:
+        if self.history_dir and session_id:
             for h in self._load_history(session_id):
                 messages.append(h)
         messages.append({"role": "user", "content": prompt})
@@ -143,12 +143,12 @@ class QwenCLI:
 
             # 保存 history (用于下次 resume)
             if self.history_dir:
-                history = self._load_history(session_id) if resume_session else []
+                history = self._load_history(session_id) if session_id else []
                 history.append({"role": "user", "content": prompt})
                 history.append({"role": "assistant", "content": reply})
                 self._save_history(session_id, history)
 
-            new_id = None if resume_session else session_id
+            new_id = None if session_id else session_id
             return CLIResponse(
                 output_text=reply,
                 new_session_id=new_id,

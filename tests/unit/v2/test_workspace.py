@@ -82,7 +82,7 @@ class TestCLIAcceptsWorkspaceDir:
     @pytest.mark.asyncio
     async def test_mock_cli_accepts_workspace_dir(self):
         cli = MockCLI()
-        r = await cli.invoke("hi", workspace_dir="/tmp")
+        r = await cli.execute("hi", workspace_dir="/tmp")
         assert r.ok  # 不报错就 OK
 
     @pytest.mark.asyncio
@@ -111,7 +111,7 @@ class TestCLIAcceptsWorkspaceDir:
             mock_session_instance.post.return_value.__aexit__ = AsyncMock(return_value=False)
             MockSession.return_value = mock_session_instance
 
-            await cli.invoke("test prompt", workspace_dir=str(tmp_path))
+            await cli.execute("test prompt", workspace_dir=str(tmp_path))
             # 验证 post 被调用
             assert mock_session_instance.post.called
             # 看 body 里的 messages 是否含 qwen.md
@@ -126,7 +126,7 @@ class TestCLIAcceptsWorkspaceDir:
         """OpenCodeCLI subprocess 时 cwd=workspace_dir"""
         cli = OpenCodeCLI(binary="echo")  # 用 echo 替代 opencode (避免没装 opencode)
         # echo 不在 PATH 时会 FileNotFoundError, 我们 catch
-        r = await cli.invoke("hello", workspace_dir=str(tmp_path))
+        r = await cli.execute("hello", workspace_dir=str(tmp_path))
         # 关键: invoke 不应该 TypeError, 应该是 ok (echo 成功) 或 error (没装)
         assert r is not None  # 调通了
         # 如果 echo 跑了, cwd 是 tmp_path (我们验证)

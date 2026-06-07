@@ -52,18 +52,20 @@ class MockCLI:
         self.template = reply_template or _MOCK_REPLY_TMPL
         self.call_count = 0
 
-    async def invoke(
-        self, prompt: str, resume_session: Optional[str] = None,
+    async def execute(
+        self, prompt: str, session_id: Optional[str] = None,
         workspace_dir: Optional[str] = None,
     ) -> CLIResponse:
         start = time.time()
         self.call_count += 1
 
         # 决定 session id: 首次 vs resume
-        if resume_session:
-            session_id = resume_session
+        if session_id:
+            is_new = False
+            new_sid = session_id
         else:
-            session_id = new_session_id("mock")
+            is_new = True
+            new_sid = new_session_id("mock")
 
         # 决定 task id (从 prompt 抓)
         task_id = _extract_task_id(prompt)
@@ -74,14 +76,14 @@ class MockCLI:
         # 生成 reply
         output = self.template.format(
             prompt_summary=prompt_summary,
-            session_id=session_id,
+            session_id=new_sid,
             task_id=task_id,
         )
 
         elapsed = int((time.time() - start) * 1000)
         return CLIResponse(
             output_text=output,
-            new_session_id=session_id if not resume_session else None,
+            new_session_id=new_sid if is_new else None,
             raw=output,
             elapsed_ms=elapsed,
         )

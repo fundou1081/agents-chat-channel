@@ -4,7 +4,7 @@ CLI base for v2.0.
 每个 Agent 绑定一个外部智能体 CLI 程序 (qwen / claude / opencode / mock).
 CLI 抽象:
   - name: 标识 (e.g. "qwen", "opencode", "mock")
-  - async invoke(prompt, resume_session=None) -> CLIResponse
+  - async invoke(prompt, session_id=None) -> CLIResponse
     - 输入: prompt 文本 + 可选 resume session_id
     - 输出: CLIResponse {output_text, new_session_id, raw}
 
@@ -40,11 +40,11 @@ class CLI(Protocol):
 
     name: str
 
-    async def invoke(
-        self, prompt: str, resume_session: Optional[str] = None,
+    async def execute(
+        self, prompt: str, session_id: Optional[str] = None,
         workspace_dir: Optional[str] = None,
     ) -> CLIResponse:
-        """调用 CLI. resume_session=None 时创建新 session, 否则恢复.
+        """调用 CLI. session_id=None 时创建新 session, 否则恢复.
 
         workspace_dir: Agent 的工作目录.
           - opencode / claude: subprocess(cwd=workspace_dir), CLI 启动后读 claude.md / opencode.md

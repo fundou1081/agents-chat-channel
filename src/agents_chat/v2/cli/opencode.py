@@ -39,8 +39,8 @@ class OpenCodeCLI:
         self.timeout = timeout_seconds
         self.call_count = 0
 
-    async def invoke(
-        self, prompt: str, resume_session: Optional[str] = None,
+    async def execute(
+        self, prompt: str, session_id: Optional[str] = None,
         workspace_dir: Optional[str] = None,
     ) -> CLIResponse:
         start = time.time()
@@ -48,8 +48,8 @@ class OpenCodeCLI:
 
         # 构造命令
         cmd = [self.binary, "run", prompt, "--model", self.model, "--format", "json"]
-        if resume_session:
-            cmd.extend(["--session", resume_session])
+        if session_id:
+            cmd.extend(["--session", session_id])
 
         try:
             # 如果提供 workspace_dir, subprocess 在 workspace_dir 里启动
@@ -88,7 +88,7 @@ class OpenCodeCLI:
             output_text = self._extract_text_from_jsonl(stdout)
 
             # opencode 不直接返回 session id, 我们生成一个
-            new_id = None if resume_session else new_session_id("oc")
+            new_id = None if session_id else new_session_id("oc")
 
             return CLIResponse(
                 output_text=output_text.strip(),
