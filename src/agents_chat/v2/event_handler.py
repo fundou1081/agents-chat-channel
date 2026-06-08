@@ -37,6 +37,7 @@ from typing import Any, Optional
 
 from .cli.base import CLI
 from .communication import CommunicationComponent
+from .decision import DecisionConfig, DecisionMaker
 from .gates import Gate, GateChain, GateResult
 from .files.channel import Channel
 from .files.lock import (
@@ -112,6 +113,8 @@ class EventHandler:
         lock_dir: Path | None = None,
         input_gates: list[Gate] | None = None,
         output_gates: list[Gate] | None = None,
+        decision_maker: DecisionMaker | None = None,
+        decision_config: DecisionConfig | None = None,
     ):
         self.comms = comms
         self.sessions = sessions
@@ -125,6 +128,14 @@ class EventHandler:
         # Worker gates: 输入/输出过滤
         self.input_gates = GateChain(list(input_gates or []), direction="input")
         self.output_gates = GateChain(list(output_gates or []), direction="output")
+        # DecisionMaker: LLM 决定 session 续/新建/skip
+        if decision_maker is not None:
+            self.decision_maker = decision_maker
+        elif decision_config is not None:
+            self.decision_maker = DecisionMaker(decision_config)
+        else:
+            # 默认: 拿 environment 变量构造 (如果环境没设 api_key, is_ready=False)
+            self.decision_maker = DecisionMaker(DecisionConfig())
 
     # ------------------------------------------------------------------
     # 主循环
@@ -158,14 +169,18 @@ class EventHandler:
     async def handle_mail(self, mail: dict):
         """处理一封邮件. 核心调度逻辑.
 
-        流程:
-          1. 解析 task_id + topic + channel
-          2. 决定续/新建 session
-          3. 构造 prompt
-          4. 调 CLI
-          5. 解析 STATUS, 更新 session
-          6. 写频道
-          7. second-route mentions
+        流程 (7 步 pipeline):
+          1. 解析 mail (path / topic / channel / task_id)
+          2. INPUT GATE — 过滤 mail.content (拒 → 写 system, return)
+          3. **DecisionMaker.decide** — 调 1 次 LLM 决定 continue/new/skip
+             - skip → 写 system 消息 "忽略", return
+             - continue → 用现有 session
+             - new → 新建 session
+             - **fallback** (LLM 失败/未配置): SessionManager.decide_session (纯程序化)
+          4. 构造 prompt
+          5. CLI.execute — 第 2 次 LLM, 生成 reply
+          6. OUTPUT GATE — 过滤 reply (拒 → 写 system, return)
+          7. 解析 STATUS, 更新 session, 写频道, second-route mentions
         """
         content = mail.get("content", "")
         ref_msg_id = mail.get("ref_msg_id", "")
@@ -173,22 +188,15 @@ class EventHandler:
         mail_type = mail.get("type", "mention")
         context_hint = mail.get("context_hint", "")
         task_id = mail.get("task_id") or derive_task_id(content, ref_msg_id)
+        # path 来自 Scanner 投递时填的 (Mailbox.append 把 extra.update 到 msg 顶层)
+        # email = 显式 @自己, 必答 (二选一)
+        # poll/broadcast/system = 其他 (三选一)
+        path = mail.get("path", "poll")
+        is_must_reply = (path == "email")
 
-        # 1. decide session (把 session 状态快照一起送, 让 decide 考虑 progress / status)
         topic = self._extract_topic(content, context_hint)
-        session, is_new = self.sessions.decide_session(
-            task_id=task_id, topic=topic, channel=channel,
-            session_snapshot=None,  # 可选: 传当前 task 的 session snapshot 给 decide
-        )
-        if is_new:
-            logger.info(f"[{self.agent_id}] 🆕 new session {session.session_id} for {topic}")
-        else:
-            logger.info(f"[{self.agent_id}] 🔄 resume session {session.session_id} (progress={session.progress}%)")
 
-        # 2. 构造 prompt
-        prompt = self._build_prompt(mail, session, task_id, topic, channel)
-
-        # 2.5 INPUT GATE — 过滤 input (mail.content)
+        # 2. INPUT GATE — 过滤 input (mail.content)
         if self.input_gates:
             input_result = self.input_gates.run(content)
             if not input_result.allowed:
@@ -209,7 +217,21 @@ class EventHandler:
                 mail = {**mail, "content": input_result.text}
                 content = input_result.text
 
-        # 3. 调 CLI
+        # 3. DecisionMaker.decide (1 次 LLM, 决定 session)
+        session, is_new = await self._decide_session(mail, task_id, topic, channel, is_must_reply)
+        if session is None:
+            # skip: 写 system 消息, return
+            await self._write_skip(mail, task_id, channel)
+            return
+        if is_new:
+            logger.info(f"[{self.agent_id}] 🆕 new session {session.session_id} for {topic}")
+        else:
+            logger.info(f"[{self.agent_id}] 🔄 resume session {session.session_id} (progress={session.progress}%)")
+
+        # 4. 构造 prompt
+        prompt = self._build_prompt(mail, session, task_id, topic, channel)
+
+        # 5. 调 CLI
         try:
             response = await self.cli.execute(
                 session_id=session.remote_id,  # 续; "" = 新建
@@ -225,7 +247,7 @@ class EventHandler:
             await self._write_cli_error(mail, task_id, channel, response.error)
             return
 
-        # 3.5 OUTPUT GATE — 过滤 output (response.output_text)
+        # 6. OUTPUT GATE — 过滤 output (response.output_text)
         output_text = response.output_text
         if self.output_gates:
             output_result = self.output_gates.run(output_text)
@@ -267,6 +289,89 @@ class EventHandler:
 
         # 7. second-route mentions
         await self._second_route(output_text, ref_msg_id, task_id, channel, session.session_id)
+
+    # ------------------------------------------------------------------
+    # 辅助: DecisionMaker 集成
+    # ------------------------------------------------------------------
+
+    async def _decide_session(
+        self, mail: dict, task_id: str, topic: str, channel: str, is_must_reply: bool,
+    ) -> tuple[Optional[Session], bool]:
+        """调 DecisionMaker 决定 session. 返回 (session, is_new) 或 (None, False) 表示 skip.
+
+        Fallback: DecisionMaker 不可用 / LLM 失败 → SessionManager.decide_session (纯程序化)
+        """
+        # 1. 准备 sessions snapshot (for DecisionMaker)
+        sessions_snapshot = [s.to_dict() for s in self.sessions.list_all()]
+
+        # 2. 调 DecisionMaker (如果 ready)
+        if self.decision_maker and self.decision_maker.is_ready:
+            try:
+                from .decision import Decision
+                decision: Decision = await self.decision_maker.decide(
+                    mail=mail,
+                    sessions=sessions_snapshot,
+                    role=self.system_prompt,
+                    is_must_reply=is_must_reply,
+                )
+                logger.info(
+                    f"[{self.agent_id}] DecisionMaker: action={decision.action} "
+                    f"session={decision.session_id or '-'} reason={decision.reason}"
+                )
+
+                # skip: 返回 (None, False) 让 EventHandler 写 system 消息
+                if decision.action == "skip":
+                    return None, False
+
+                # continue: 用现有 session
+                if decision.action == "continue" and decision.session_id:
+                    for s in self.sessions.list_all():
+                        if s.session_id == decision.session_id:
+                            # 关联到当前 task (跟老 decide_session 一致)
+                            self.sessions.update(s.session_id, task_id=task_id)
+                            return s, False
+
+                # new (或 continue 失败回退): 新建
+                new_s = self.sessions.create(
+                    topic=topic, channel=channel, task_id=task_id,
+                )
+                return new_s, True
+            except Exception as e:
+                logger.warning(
+                    f"[{self.agent_id}] DecisionMaker 失败, fallback 到 SessionManager: {e}"
+                )
+                # 走下面 fallback 路径
+
+        # 3. Fallback: SessionManager.decide_session (纯程序化, 老逻辑)
+        session, is_new = self.sessions.decide_session(
+            task_id=task_id, topic=topic, channel=channel, session_snapshot=None,
+        )
+        return session, is_new
+
+    async def _write_skip(self, mail: dict, task_id: str, channel: str):
+        """DecisionMaker skip: 写 system 消息到频道, 说明被忽略.
+
+        不调 LLM, 不发 reply. 频道里能审计谁被 skip 了.
+        """
+        if not self.channels_dir:
+            return
+        from .files.channel import Channel
+        ch = Channel(self.channels_dir / f"{channel}.jsonl", channel)
+        body = (
+            f"[{self.agent_id}] ignored (DecisionMaker skip)\n\n"
+            f"<!--STATUS\n"
+            f" session_id: -\n"
+            f" task_id: {task_id}\n"
+            f" progress: 0\n"
+            f" summary: {self.agent_id} 决定忽略此 mail\n"
+            f" next_action: (无)\n"
+            f" confidence: low\n"
+            f"-->"
+        )
+        ch.append(
+            from_=self.agent_id, content=body, type="system",
+            ref_msg_id=mail.get("ref_msg_id", ""), task_id=task_id,
+        )
 
     # ------------------------------------------------------------------
     # 处理 stale task

@@ -234,7 +234,7 @@ class Scanner:
                     "channel": channel_name,
                     "task_id": derive_task_id_from_content(content, msg_id),
                     "extra_mentions": [target],  # 保留原始 mention
-                })
+                }, path="email")  # 显式 @target, 必答
 
         # 3. [TASK] 广播 — 只发给频道成员
         if _TASK_TAG_RE.search(content):
@@ -250,7 +250,7 @@ class Scanner:
                     "content": content,
                     "channel": channel_name,
                     "task_id": task_id,
-                })
+                }, path="broadcast")  # 广播, DecisionMaker 决定续/新建/skip
 
     async def _maybe_update_status(self, msg: dict):
         """如果消息含 STATUS 块, 更新 state_board."""
@@ -268,11 +268,13 @@ class Scanner:
             if status.progress >= 100:
                 self.state_board.complete(task_id)
 
-    async def _deliver_mail(self, agent_id: str, mail_type: str, mail_data: dict):
+    async def _deliver_mail(self, agent_id: str, mail_type: str, mail_data: dict, path: str = "email"):
         """投递邮件到 agent 邮箱 (agent 必须已注册 mailbox).
 
         mail_type: "mention" | "task_broadcast" | "opportunity" | "system_notify" | "request_status"
         mail_data: {ref_msg_id, content, channel, task_id?, context_hint?}
+        path: "email" (显式 @自己, 必答) | "poll" (主动轮询) | "broadcast" (广播) | "system"
+              用于 EventHandler / DecisionMaker 决定: 邮箱路径必答, 轮询路径 LLM 决定 skip
         """
         mb = self.mailbox_of(agent_id)
         if not mb.path.exists():
@@ -287,8 +289,9 @@ class Scanner:
                 kwargs[k] = v
             else:
                 extra[k] = v
-        if extra:
-            kwargs["extra"] = extra
+        # path 信息写到 extra, EventHandler 读
+        extra["path"] = path
+        kwargs["extra"] = extra
         mb.append(**kwargs)
 
     # ------------------------------------------------------------------

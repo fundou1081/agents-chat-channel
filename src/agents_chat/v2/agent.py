@@ -37,6 +37,7 @@ from typing import Optional
 from .event_handler import EventHandler, extract_mentions
 from .cli.base import CLI
 from .communication import CommunicationComponent
+from .decision import DecisionConfig, DecisionMaker
 from .files.channel import Channel
 from .files.mailbox import Mailbox
 from .gates import Gate
@@ -71,6 +72,8 @@ class Agent:
         workspace_dir: str | Path | None = None,
         input_gates: list[Gate] | None = None,
         output_gates: list[Gate] | None = None,
+        decision_config: DecisionConfig | None = None,
+        decision_maker: DecisionMaker | None = None,
     ):
         self.agent_id = agent_id
         self.cli = cli
@@ -81,6 +84,8 @@ class Agent:
         self.system_prompt = system_prompt
         self.input_gates = input_gates
         self.output_gates = output_gates
+        self.decision_config = decision_config
+        self.decision_maker = decision_maker  # 优先于 decision_config
 
         # ============ 文件 IO (per agent 自己的) ============
         self.mailbox = Mailbox(
@@ -136,6 +141,8 @@ class Agent:
             lock_dir=self.lock_dir,
             input_gates=self.input_gates,
             output_gates=self.output_gates,
+            decision_maker=self.decision_maker,
+            decision_config=self.decision_config,
         )
         # 向后兼容: 老代码用 agent.scheduler 也可访问
         self.scheduler = self.event_handler
