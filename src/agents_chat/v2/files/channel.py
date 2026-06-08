@@ -42,10 +42,12 @@ class Channel:
     成员信息独立于 JSONL 消息, 避免每条消息都重复 members 列表.
     """
 
-    def __init__(self, path: str | Path, name: str = ""):
+    def __init__(self, path: str | Path, name: str = "", max_messages: int = 0):
         self.path = Path(path)
         self.name = name or self.path.stem
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # max_messages: 频道最大消息数. 0=不限制. 超过时自动 trim 旧消息.
+        self.max_messages = max_messages
         # metadata sidecar: channels/{name}.meta.json
         self.meta_path = self.path.with_suffix(self.path.suffix + ".meta.json")
         # touch JSONL
@@ -239,6 +241,27 @@ class Channel:
         """白名单是否限制 (非空=有限制)."""
         return len(self.list_enabled_workers()) > 0
 
+    def set_max_messages(self, max_messages: int) -> None:
+        """设频道最大消息数. 0=不限制."""
+        self.max_messages = max_messages
+
+    def _trim(self) -> int:
+        """如果消息数超过 max_messages, 删旧消息. 返回删除数."""
+        if self.max_messages <= 0:
+            return 0
+        count = self._count_lines()
+        if count <= self.max_messages:
+            return 0
+        # 重写文件: 保留最后 max_messages 条
+        with open(self.path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        keep = lines[-self.max_messages:]
+        # atomic: 写 tmp 再 rename
+        tmp = self.path.with_suffix(".trim.tmp")
+        tmp.write_text("".join(keep), encoding="utf-8")
+        os.replace(tmp, self.path)
+        return count - self.max_messages
+
     # ------------------------------------------------------------------
     # 写入
     # ------------------------------------------------------------------
@@ -285,6 +308,8 @@ class Channel:
             if len(line) + 1 > _ATOMIC_WRITE_LIMIT:
                 # 超过 4K 警告 (不阻断, 因为是 file 不是 pipe)
                 pass
+        # trim if max_messages exceeded
+        self._trim()
         return msg_id
 
     # ------------------------------------------------------------------
