@@ -308,32 +308,43 @@ class Scanner:
     ) -> Optional[str]:
         """5 条铁律第 2 条: 不确定就 @频道管理员.
 
-        规则:
-          1. 显式 @频道管理员 / @admin / @god / @频道 (常见 admin 关键字) → 投到那个 admin
-          2. 频道有 admin 但 target 没匹配到任何 agent → 投第一个 admin
-          3. 频道没 admin → 返回 None (不投递)
+        规则 (优先级从高到低):
+          1. 显式提及 admin 关键字 (@admin / @god / @频道管理员 / @频道) → 投那个 admin
+             **但必须是 worker admin** (在 known_agents 里), 人类 admin 即使名字含 admin 关键字也不投递
+          2. **worker 优先**: 如果 admins 里有 worker agent (在 known_agents 里), 投那个
+             - 人类 admin 没 mailbox, _deliver_mail 会跳过, 所以优先选 worker
+          3. 频道没 admin 或 admin 都不在线 → 返回 None (不投递)
           4. exclude: 排除这个 agent_id (避免 msg_from == admin 投给自己)
 
         参数:
+          - target: mention 的目标 (e.g. "admin" / "god" / 不确定的字符串)
+          - admins: 频道的 worker admins (Channel.list_admins() 返回值)
           - exclude: 排除这个 agent_id (通常是 msg_from, 防止 self-mail)
+
+        返回: 解析后的 agent_id (会投递邮件), 或 None (不投递)
         """
         if not admins:
             return None
+        # 过滤掉 exclude
+        candidates = [a for a in admins if not exclude or a != exclude]
+        if not candidates:
+            return None
         target_lower = target.lower()
-        # 规则 1: 显式提及 admin 关键字
+        known = set(self._discover_agents())
+        # 规则 1: 显式提及 admin 关键字 (但必须是 worker admin)
         admin_keywords = ("频道管理员", "admin", "god", "频道", "channel_admin", "manager")
-        for admin in admins:
-            if exclude and admin == exclude:
-                continue  # 跳过自己
+        for admin in candidates:
+            if admin not in known:
+                continue  # 人类 admin, 跳过 (即使名字含 admin 关键字)
             admin_lower = admin.lower()
             for kw in admin_keywords:
                 if kw.lower() in target_lower or kw.lower() in admin_lower:
                     return admin
-        # 规则 2: fallback 投第一个 admin (排除自己)
-        for admin in admins:
-            if exclude and admin == exclude:
-                continue
-            return admin  # 第一个非自己的
+        # 规则 2: worker 优先 (在 known_agents 里的 admin 才是 worker)
+        for admin in candidates:
+            if admin in known:
+                return admin  # worker admin, 投递
+        # 规则 3: 没有 worker admin (都是人类), 不投递
         return None
 
     def _is_known_agent(self, agent_id: str) -> bool:

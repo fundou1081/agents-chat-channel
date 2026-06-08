@@ -78,7 +78,10 @@ class TestResolveAdminFallback:
         s = self._make_scanner(env)
         ch = Channel(env["channels_dir"] / "fish.jsonl", "fish")
         ch.add_admin("admin_bot")  # 名字本身含 "admin"
-        assert s._resolve_admin_fallback("any_target", ch.list_admins()) == "admin_bot"
+        # 新逻辑: admin_bot 必须在 known_agents 里 (有 mailbox)
+        Mailbox(env["tmp"] / "mailboxes" / "admin_bot.json", "admin_bot")
+        s2 = self._make_scanner(env)  # 重建 scanner 重新发现 agents
+        assert s2._resolve_admin_fallback("any_target", ch.list_admins()) == "admin_bot"
 
 
 class TestScannerRouteAdminFallback:

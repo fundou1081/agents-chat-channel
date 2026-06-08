@@ -61,12 +61,26 @@ class Channel:
 
     def _load_meta(self) -> dict:
         if not self.meta_path.exists():
-            return {"name": self.name, "members": [], "admins": [], "created_by": "", "created_at": ""}
+            return {
+                "name": self.name, "members": [], "admins": [],
+                "human_admins": [], "admin_types": {},
+                "created_by": "", "created_at": "",
+            }
         try:
             import json
-            return json.loads(self.meta_path.read_text("utf-8"))
+            data = json.loads(self.meta_path.read_text("utf-8"))
+            # 兼容老 metadata: 补字段
+            data.setdefault("human_admins", [])
+            data.setdefault("admin_types", {})
+            data.setdefault("members", [])
+            data.setdefault("admins", [])
+            return data
         except (json.JSONDecodeError, OSError):
-            return {"name": self.name, "members": [], "admins": [], "created_by": "", "created_at": ""}
+            return {
+                "name": self.name, "members": [], "admins": [],
+                "human_admins": [], "admin_types": {},
+                "created_by": "", "created_at": "",
+            }
 
     def _save_meta(self, meta: dict):
         import json, os, tempfile
@@ -93,13 +107,38 @@ class Channel:
         self._save_meta(meta)
         return True
 
-    def add_admin(self, agent_id: str) -> bool:
-        """加管理员."""
+    def add_admin(self, agent_id: str, is_worker: bool = True) -> bool:
+        """加管理员.
+
+        参数:
+          - agent_id: 管理员 id
+          - is_worker: True=worker agent (有 mailbox, scanner 会投递)
+                       False=人类 admin (没 mailbox, 写在 human_admins 列表,
+                            频道里看, 不会被 scanner 误投递)
+
+        兼容性: 老调用 `add_admin(agent_id)` 默认 is_worker=True,
+                行为跟以前一致.
+        """
         meta = self._load_meta()
-        if agent_id in meta.get("members", []):
-            return False  # 需先 add_member
-        meta.setdefault("admins", []).append(agent_id)
-        meta.setdefault("members", []).append(agent_id)
+        members = meta.setdefault("members", [])
+        admins = meta.setdefault("admins", [])
+        human_admins = meta.setdefault("human_admins", [])
+        admin_types = meta.setdefault("admin_types", {})
+
+        if is_worker:
+            # 已经在 admins 里
+            if agent_id in admins:
+                return False
+            admins.append(agent_id)
+            admin_types[agent_id] = "worker"
+            if agent_id not in members:
+                members.append(agent_id)
+        else:
+            # 人类 admin: 写到 human_admins, 不进 admins
+            if agent_id in human_admins:
+                return False
+            human_admins.append(agent_id)
+            admin_types[agent_id] = "human"
         self._save_meta(meta)
         return True
 
@@ -107,7 +146,47 @@ class Channel:
         return list(self._load_meta().get("members", []))
 
     def list_admins(self) -> list[str]:
+        """返回 worker admins (跟老 API 兼容).
+
+        人类 admin 在 list_human_admins() 里.
+        """
         return list(self._load_meta().get("admins", []))
+
+    def list_human_admins(self) -> list[str]:
+        """返回人类 admins (新). scanner 不会投递到这些."""
+        return list(self._load_meta().get("human_admins", []))
+
+    def is_admin(self, agent_id: str, is_worker: bool | None = None) -> bool:
+        """检查 agent_id 是不是 admin.
+
+        参数:
+          - is_worker=None: 任意类型 (worker 或 human)
+          - is_worker=True: 只看 worker admins
+          - is_worker=False: 只看 human admins
+        """
+        meta = self._load_meta()
+        if is_worker is None:
+            return agent_id in meta.get("admins", []) or agent_id in meta.get("human_admins", [])
+        if is_worker:
+            return agent_id in meta.get("admins", [])
+        return agent_id in meta.get("human_admins", [])
+
+    def remove_admin(self, agent_id: str, is_worker: bool = True) -> bool:
+        """移除 admin."""
+        meta = self._load_meta()
+        if is_worker:
+            if agent_id in meta.get("admins", []):
+                meta["admins"].remove(agent_id)
+                meta.get("admin_types", {}).pop(agent_id, None)
+                self._save_meta(meta)
+                return True
+        else:
+            if agent_id in meta.get("human_admins", []):
+                meta["human_admins"].remove(agent_id)
+                meta.get("admin_types", {}).pop(agent_id, None)
+                self._save_meta(meta)
+                return True
+        return False
 
     def is_member(self, agent_id: str) -> bool:
         return agent_id in self.list_members()

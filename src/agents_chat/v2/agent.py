@@ -38,6 +38,7 @@ from .cli.base import CLI
 from .communication import CommunicationComponent
 from .files.channel import Channel
 from .files.mailbox import Mailbox
+from .gates import Gate
 from .session_manager import SessionManager
 from .state_board import StateBoard
 
@@ -67,6 +68,8 @@ class Agent:
         default_channel: str = "general",
         system_prompt: str = "",
         workspace_dir: str | Path | None = None,
+        input_gates: list[Gate] | None = None,
+        output_gates: list[Gate] | None = None,
     ):
         self.agent_id = agent_id
         self.cli = cli
@@ -75,6 +78,8 @@ class Agent:
         self.poll_interval = poll_interval
         self.default_channel = default_channel
         self.system_prompt = system_prompt
+        self.input_gates = input_gates
+        self.output_gates = output_gates
 
         # ============ 文件 IO (per agent 自己的) ============
         self.mailbox = Mailbox(
@@ -126,6 +131,8 @@ class Agent:
             default_channel=default_channel,
             channels_dir=self.channels_dir,
             lock_dir=self.lock_dir,
+            input_gates=self.input_gates,
+            output_gates=self.output_gates,
         )
 
     # ============ 公共 API (向后兼容) ============

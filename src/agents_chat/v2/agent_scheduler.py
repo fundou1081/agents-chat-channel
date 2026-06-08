@@ -30,6 +30,7 @@ from typing import Any, Optional
 
 from .cli.base import CLI
 from .communication import CommunicationComponent
+from .gates import Gate, GateChain, GateResult
 from .files.channel import Channel
 from .files.lock import (
     acquire as lock_acquire,
@@ -102,6 +103,8 @@ class AgentScheduler:
         default_channel: str = "general",
         channels_dir: Path | None = None,
         lock_dir: Path | None = None,
+        input_gates: list[Gate] | None = None,
+        output_gates: list[Gate] | None = None,
     ):
         self.comms = comms
         self.sessions = sessions
@@ -112,6 +115,9 @@ class AgentScheduler:
         self.default_channel = default_channel
         self.channels_dir = Path(channels_dir) if channels_dir else None
         self.lock_dir = Path(lock_dir) if lock_dir else None
+        # Worker gates: 输入/输出过滤
+        self.input_gates = GateChain(list(input_gates or []), direction="input")
+        self.output_gates = GateChain(list(output_gates or []), direction="output")
 
     # ------------------------------------------------------------------
     # 主循环
@@ -175,6 +181,27 @@ class AgentScheduler:
         # 2. 构造 prompt
         prompt = self._build_prompt(mail, session, task_id, topic, channel)
 
+        # 2.5 INPUT GATE — 过滤 input (mail.content)
+        if self.input_gates:
+            input_result = self.input_gates.run(content)
+            if not input_result.allowed:
+                # gate 拒绝, 写 system 消息到频道, 不调 LLM
+                logger.warning(
+                    f"[{self.agent_id}] input gate REJECTED: {input_result.reason}"
+                )
+                await self._write_gate_reject(
+                    channel, "input", input_result.reason,
+                    ref_msg_id, task_id,
+                )
+                return
+            # gate 改写了 content (sanitize), 更新 mail.content 给 prompt
+            if input_result.text != content:
+                logger.info(
+                    f"[{self.agent_id}] input gate sanitized: {input_result.reason}"
+                )
+                mail = {**mail, "content": input_result.text}
+                content = input_result.text
+
         # 3. 调 CLI
         try:
             response = await self.cli.execute(
@@ -190,6 +217,26 @@ class AgentScheduler:
         if not response.ok:
             await self._write_cli_error(mail, task_id, channel, response.error)
             return
+
+        # 3.5 OUTPUT GATE — 过滤 output (response.output_text)
+        output_text = response.output_text
+        if self.output_gates:
+            output_result = self.output_gates.run(output_text)
+            if not output_result.allowed:
+                # gate 拒绝, 写 system 消息到频道, 不发 reply
+                logger.warning(
+                    f"[{self.agent_id}] output gate REJECTED: {output_result.reason}"
+                )
+                await self._write_gate_reject(
+                    channel, "output", output_result.reason,
+                    ref_msg_id, task_id,
+                )
+                return
+            if output_result.text != output_text:
+                logger.info(
+                    f"[{self.agent_id}] output gate sanitized: {output_result.reason}"
+                )
+                output_text = output_result.text
 
         # 4. 解析 STATUS
         status = parse_status_block(response.output_text)
@@ -209,10 +256,10 @@ class AgentScheduler:
             logger.warning(f"[{self.agent_id}] session update error: {e}")
 
         # 6. 写频道
-        await self._write_channel_reply(channel, response.output_text, ref_msg_id, task_id)
+        await self._write_channel_reply(channel, output_text, ref_msg_id, task_id)
 
         # 7. second-route mentions
-        await self._second_route(response.output_text, ref_msg_id, task_id, channel, session.session_id)
+        await self._second_route(output_text, ref_msg_id, task_id, channel, session.session_id)
 
     # ------------------------------------------------------------------
     # 处理 stale task
@@ -416,6 +463,34 @@ channel: {channel}
         ch.append(
             from_=self.agent_id, content=body, type="reply",
             ref_msg_id=mail.get("ref_msg_id", ""), task_id=task_id,
+        )
+
+    async def _write_gate_reject(
+        self, channel: str, direction: str, reason: str,
+        ref_msg_id: str, task_id: str,
+    ):
+        """Gate 拒绝: 写 system 消息到频道.
+
+        不调 LLM, 不发 reply. 让用户/admin 看到拒绝原因.
+        """
+        if not self.channels_dir:
+            return
+        from .files.channel import Channel
+        ch = Channel(self.channels_dir / f"{channel}.jsonl", channel)
+        body = (
+            f"[{self.agent_id}] {direction} gate REJECTED: {reason}\n\n"
+            f"<!--STATUS\n"
+            f" session_id: local_{self.agent_id}\n"
+            f" task_id: {task_id}\n"
+            f" progress: 0\n"
+            f" summary: {direction} gate 拒绝 ({reason})\n"
+            f" next_action: 等待人工调整 (gate 配置或内容)\n"
+            f" confidence: low\n"
+            f"-->"
+        )
+        ch.append(
+            from_=self.agent_id, content=body, type="system",
+            ref_msg_id=ref_msg_id, task_id=task_id,
         )
 
     # ------------------------------------------------------------------
