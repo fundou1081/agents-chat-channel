@@ -205,8 +205,10 @@ class Scanner:
         if not members:
             members = self._discover_agents()
 
-        # 2. mention 路由 (模糊匹配)
+        # 2. mention 路由 (模糊匹配 + @admin fallback, 5 条铁律第 2 条)
         if mentions:
+            # 频道 admins (用于 fallback)
+            admins = ch.list_admins() if hasattr(ch, 'list_admins') else []
             for target in mentions:
                 if target == msg_from:
                     continue
@@ -214,8 +216,16 @@ class Scanner:
                 known = list(set(members + self._discover_agents()))
                 resolved = fuzzy_resolve_mention(target, known)
                 if not resolved:
-                    # 没匹配到任何 agent, 跳过 (避免投递到不存在的邮箱)
-                    continue
+                    # 没匹配到任何 agent: 5 条铁律第 2 条 fallback
+                    # - 显式 @频道管理员 / @admin / @god → 投 admin
+                    # - 其他不确定的 mention → 投频道第一个 admin
+                    # - exclude=msg_from: 跳过自己 (避免 god 投给自己)
+                    admin_target = self._resolve_admin_fallback(target, admins, exclude=msg_from)
+                    if admin_target:
+                        resolved = admin_target
+                    else:
+                        # 没 admin 也没匹配到, 跳过
+                        continue
                 if resolved == msg_from:
                     continue
                 await self._deliver_mail(resolved, "mention", {
@@ -292,6 +302,39 @@ class Scanner:
         return sorted([
             p.stem for p in self.mailboxes_dir.glob("*.json")
         ])
+
+    def _resolve_admin_fallback(
+        self, target: str, admins: list[str], exclude: Optional[str] = None,
+    ) -> Optional[str]:
+        """5 条铁律第 2 条: 不确定就 @频道管理员.
+
+        规则:
+          1. 显式 @频道管理员 / @admin / @god / @频道 (常见 admin 关键字) → 投到那个 admin
+          2. 频道有 admin 但 target 没匹配到任何 agent → 投第一个 admin
+          3. 频道没 admin → 返回 None (不投递)
+          4. exclude: 排除这个 agent_id (避免 msg_from == admin 投给自己)
+
+        参数:
+          - exclude: 排除这个 agent_id (通常是 msg_from, 防止 self-mail)
+        """
+        if not admins:
+            return None
+        target_lower = target.lower()
+        # 规则 1: 显式提及 admin 关键字
+        admin_keywords = ("频道管理员", "admin", "god", "频道", "channel_admin", "manager")
+        for admin in admins:
+            if exclude and admin == exclude:
+                continue  # 跳过自己
+            admin_lower = admin.lower()
+            for kw in admin_keywords:
+                if kw.lower() in target_lower or kw.lower() in admin_lower:
+                    return admin
+        # 规则 2: fallback 投第一个 admin (排除自己)
+        for admin in admins:
+            if exclude and admin == exclude:
+                continue
+            return admin  # 第一个非自己的
+        return None
 
     def _is_known_agent(self, agent_id: str) -> bool:
         """判断 agent_id 是不是会发 reply 的 agent (排除 admin).
