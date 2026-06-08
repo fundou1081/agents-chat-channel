@@ -161,10 +161,11 @@ class AgentScheduler:
         context_hint = mail.get("context_hint", "")
         task_id = mail.get("task_id") or derive_task_id(content, ref_msg_id)
 
-        # 1. decide session
+        # 1. decide session (把 session 状态快照一起送, 让 decide 考虑 progress / status)
         topic = self._extract_topic(content, context_hint)
         session, is_new = self.sessions.decide_session(
             task_id=task_id, topic=topic, channel=channel,
+            session_snapshot=None,  # 可选: 传当前 task 的 session snapshot 给 decide
         )
         if is_new:
             logger.info(f"[{self.agent_id}] 🆕 new session {session.session_id} for {topic}")

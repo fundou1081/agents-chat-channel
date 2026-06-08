@@ -39,6 +39,31 @@ def _new_internal_id(agent_id: str) -> str:
 
 
 @dataclass
+class SessionSnapshot:
+    """轻量 session 状态摘要 (Comms / Scanner 调 API 判断时用).
+
+    跟 Session 区别: 不含 remote_id / last_active (API 判断用不上),
+    只含判断所需字段 (session_id / topic / progress / next_action / content_summary / status / task_id / channel).
+
+    用法 (Scanner 调 API 判断时, 把所有自己的 session snapshot 一起送):
+        my_snapshots = sessions.snapshot()  # list[SessionSnapshot]
+        if decide_continue(mail, my_snapshots, ...):
+            ...
+    """
+    session_id: str
+    topic: str
+    progress: int
+    next_action: str
+    content_summary: str
+    status: str
+    task_id: str
+    channel: str
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
 class Session:
     """一个 session (一段连贯工作) 的完整状态.
 
@@ -71,6 +96,19 @@ class Session:
     @classmethod
     def from_dict(cls, d: dict) -> "Session":
         return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+
+    def snapshot(self) -> "SessionSnapshot":
+        """轻量快照 (Comms/Scanner 调 API 判断时用, 避免传整个 Session)."""
+        return SessionSnapshot(
+            session_id=self.session_id,
+            topic=self.topic,
+            progress=self.progress,
+            next_action=self.next_action,
+            content_summary=self.content_summary,
+            status=self.status,
+            task_id=self.task_id,
+            channel=self.channel,
+        )
 
 
 class SessionManager:
@@ -201,23 +239,34 @@ class SessionManager:
         task_id: str,
         topic: str,
         channel: str = "",
+        session_snapshot: Optional["SessionSnapshot"] = None,
     ) -> tuple[Session, bool]:
         """智能匹配 active session. 返回 (session, is_new).
 
         规则 (按优先级):
           1. 精确匹配: 同 (channel, task_id) 的 active session → 续
-          2. 模糊匹配: 同 channel + topic 关键词 → 续 (更新 task_id)
+          2. 模糊匹配: 同 channel + topic 关键词 → 续 (考虑 session_snapshot 上下文)
           3. 不命中 → 新建
+
+        参数:
+          - session_snapshot: 调 API 时带入的当前 session 状态快照 (可空)
+            Scanner 调 decide 时, 把当前正在处理的 session 状态一起送, 让 decide 能考虑
+            progress / status 上下文 (例如: 已有 session 进度 >= 100, 不续避免重复触发)
         """
         # 1. 精确匹配
         for s in self.list_active():
             if s.task_id == task_id and (not channel or s.channel == channel):
                 return s, False
 
-        # 2. 模糊匹配 (同 channel + topic 包含)
+        # 2. 模糊匹配 (考虑 session_snapshot 上下文)
         for s in self.list_active():
             if s.channel == channel and topic and s.topic:
                 if topic in s.topic or s.topic in topic:
+                    # 新: 考虑 session_snapshot 判断
+                    if session_snapshot:
+                        # 如果已有 session 进度 >= 100 (已完成), 不续, 跳过
+                        if s.progress >= 100:
+                            continue
                     # 续 + 关联到新 task
                     self.update(s.session_id, task_id=task_id)
                     s.task_id = task_id
@@ -226,6 +275,13 @@ class SessionManager:
         # 3. 新建
         new_s = self.create(topic=topic, channel=channel, task_id=task_id)
         return new_s, True
+
+    def snapshot(self) -> list["SessionSnapshot"]:
+        """返回所有 session 的轻量快照列表 (Scanner 调 API 判断时用).
+
+        返回: list[SessionSnapshot] (不含 remote_id / last_active 等冗余字段)
+        """
+        return [s.snapshot() for s in self.list_all()]
 
     # ------------------------------------------------------------------
     # 内部
