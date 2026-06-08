@@ -47,7 +47,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -141,6 +141,8 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
                 "members": ch.list_members(),
                 "admins": ch.list_admins(),
                 "human_admins": ch.list_human_admins(),
+                "enabled_workers": ch.list_enabled_workers(),
+                "max_messages": ch.max_messages,
             })
         return channels
 
@@ -204,6 +206,18 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
         ch.add_member(req.agent_id)
         return {"ok": True}
 
+    @app.delete("/api/channels/{name}/members/{agent_id}")
+    def remove_member(name: str, agent_id: str):
+        """从频道中移除成员。"""
+        ch_path = data_dir / "channels" / f"{name}.jsonl"
+        if not ch_path.exists():
+            raise HTTPException(404, f"channel {name} not found")
+        ch = Channel(ch_path, name)
+        removed = ch.remove_member(agent_id)
+        if not removed:
+            raise HTTPException(404, f"member {agent_id} not found in channel {name}")
+        return {"ok": True, "removed": agent_id}
+
     @app.post("/api/channels/{name}/admins")
     def add_admin(name: str, req: AddAdminRequest):
         ch_path = data_dir / "channels" / f"{name}.jsonl"
@@ -212,6 +226,68 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
         ch = Channel(ch_path, name)
         ch.add_admin(req.agent_id, is_worker=not req.is_human)
         return {"ok": True}
+
+    @app.put("/api/channels/{name}/config")
+    def update_channel_config(name: str, body: dict = Body(...)):
+        """更新频道配置 (统一入口).
+        
+        支持字段:
+          max_messages: int — 最大消息数 (0=不限制)
+          enabled_workers: list[str] — worker 白名单
+          add_admins: list[str] — 添加管理员
+          add_members: list[str] — 添加成员
+          remove_members: list[str] — 移除成员
+        """
+        ch_path = data_dir / "channels" / f"{name}.jsonl"
+        if not ch_path.exists():
+            raise HTTPException(404, f"channel {name} not found")
+        
+        ch = Channel(ch_path, name)
+        
+        results = {"ok": True, "channel": name}
+        
+        # 更新 max_messages
+        if "max_messages" in body:
+            new_max = int(body["max_messages"])
+            if new_max < 0:
+                raise HTTPException(400, "max_messages must be >= 0")
+            ch.max_messages = new_max
+            meta = ch._load_meta()
+            meta["max_messages"] = new_max
+            ch._save_meta(meta)
+            results["max_messages"] = new_max
+        
+        # 更新 worker 白名单
+        if "enabled_workers" in body:
+            workers = list(body["enabled_workers"])
+            ch.set_enabled_workers(workers)
+            results["enabled_workers"] = workers
+        
+        # 添加管理员
+        if "add_admins" in body:
+            added = []
+            for aid in body["add_admins"]:
+                ch.add_admin(aid)
+                added.append(aid)
+            results["add_admins"] = added
+        
+        # 添加成员
+        if "add_members" in body:
+            added = []
+            for mid in body["add_members"]:
+                ch.add_member(mid)
+                added.append(mid)
+            results["add_members"] = added
+        
+        # 移除成员
+        if "remove_members" in body:
+            removed = []
+            for mid in body["remove_members"]:
+                ch.remove_member(mid)
+                removed.append(mid)
+            results["remove_members"] = removed
+        
+        return results
 
     # -------------------------------------------------------------------------
     # Agents / Workers
@@ -249,6 +325,167 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
             "tasks": sb.list_by_agent(agent_id),
         }
 
+    @app.get("/api/agents/{agent_id}/config")
+    def get_agent_config(agent_id: str):
+        """从 workspace/config.json 读取 Worker 配置."""
+        import json
+        
+        workspace_dir = data_dir / "workspaces" / agent_id
+        config_path = workspace_dir / "config.json"
+        
+        if not config_path.exists():
+            raise HTTPException(404, f"Worker {agent_id} config.json not found")
+        
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            
+            return {
+                "agent_id": agent_id,
+                "config": config,
+                "workspace_dir": str(workspace_dir)
+            }
+        except json.JSONDecodeError as e:
+            raise HTTPException(500, f"Invalid JSON in config.json: {str(e)}")
+
+    @app.get("/api/agents/{agent_id}/pdr-status")
+    def get_agent_pdr_status(agent_id: str):
+        """获取 Worker 的 PDR 四组件状态."""
+        from pathlib import Path as PathLib
+        
+        # Perceive: CommunicationComponent 状态
+        mb_path = data_dir / "mailboxes" / f"{agent_id}.json"
+        mb = Mailbox(mb_path, agent_id)
+        pending_mails = mb.peek()
+        
+        # 检查订阅频道 (从 workspace 或配置文件读取)
+        workspace_dir = data_dir / "workspaces" / agent_id
+        subscriptions = []
+        if workspace_dir.exists():
+            subs_file = workspace_dir / "subscriptions.json"
+            if subs_file.exists():
+                try:
+                    import json
+                    subscriptions = json.loads(subs_file.read_text())
+                except:
+                    pass
+        
+        # Decide: EventHandler 状态 (从日志或状态文件推断)
+        log_path = data_dir / "logs" / f"{agent_id}.log"
+        last_decision = None
+        if log_path.exists():
+            try:
+                lines = log_path.read_text().splitlines()
+                for line in reversed(lines[-50:]):  # 检查最后50行
+                    if "decide_session" in line or "decide_speak" in line:
+                        last_decision = line.strip()
+                        break
+            except:
+                pass
+        
+        # Remember: SessionManager 状态
+        sessions_dir = data_dir / "sessions"
+        sm = SessionManager(sessions_dir / f"{agent_id}.json", agent_id)
+        active_sessions = [s.to_dict() for s in sm.list_active()]
+        session_snapshots = []
+        try:
+            session_snapshots = [s.snapshot() for s in sm.list_active()]
+        except:
+            pass
+        
+        # Act: CLI 状态
+        cli_type = "unknown"
+        model = "unknown"
+        
+        # 优先从 config.json 读取 CLI 类型
+        config_path = workspace_dir / "config.json"
+        if config_path.exists():
+            try:
+                import json
+                with open(config_path, "r", encoding="utf-8") as f:
+                    config = json.load(f)
+                cli_type = config.get("cli", "unknown")
+            except:
+                pass
+        
+        # 如果 config.json 中没有，fallback 到检查 .md 文件
+        if cli_type == "unknown" and workspace_dir.exists():
+            for cli_name in ["opencode", "qwen", "mock"]:
+                cli_file = workspace_dir / f"{cli_name}.md"
+                if cli_file.exists():
+                    cli_type = cli_name
+                    break
+        
+        # 尝试从 config.json 或 .md 文件中提取 model 信息
+        if cli_type != "unknown":
+            # 先尝试从 config.json 读取
+            if config_path.exists():
+                try:
+                    with open(config_path, "r", encoding="utf-8") as f:
+                        config = json.load(f)
+                    if "model" in config:
+                        model = config["model"]
+                except:
+                    pass
+            
+            # 如果没有，尝试从 .md 文件中提取
+            if model == "unknown":
+                cli_file = workspace_dir / f"{cli_type}.md"
+                if cli_file.exists():
+                    try:
+                        content = cli_file.read_text()
+                        if "model" in content.lower():
+                            import re
+                            match = re.search(r'model[:\s]+([\w-]+)', content, re.IGNORECASE)
+                            if match:
+                                model = match.group(1)
+                    except:
+                        pass
+        
+        # 最后执行时间 (从日志推断)
+        last_execution = None
+        if log_path.exists():
+            try:
+                lines = log_path.read_text().splitlines()
+                for line in reversed(lines[-20:]):
+                    if "execute" in line.lower() or "cli" in line.lower():
+                        # 提取时间戳
+                        import re
+                        time_match = re.search(r'(\d{2}:\d{2}:\d{2})', line)
+                        if time_match:
+                            last_execution = time_match.group(1)
+                            break
+            except:
+                pass
+        
+        return {
+            "agent_id": agent_id,
+            "pdr": {
+                "perceive": {
+                    "pending_mails_count": len(pending_mails),
+                    "pending_mails": pending_mails[:5],  # 最近5封
+                    "subscriptions": subscriptions,
+                    "last_poll": None  # TODO: 需要更精确的实现
+                },
+                "decide": {
+                    "mode": "proactive" if subscriptions else "passive",
+                    "last_decision": last_decision,
+                    "decision_history": []  # TODO: 需要持久化决策历史
+                },
+                "remember": {
+                    "active_sessions_count": len(active_sessions),
+                    "active_sessions": active_sessions,
+                    "session_snapshots": session_snapshots
+                },
+                "act": {
+                    "cli_type": cli_type,
+                    "model": model,
+                    "workspace_dir": str(workspace_dir) if workspace_dir.exists() else None,
+                    "last_execution": last_execution
+                }
+            }
+        }
+
     @app.post("/api/agents/{agent_id}/start")
     def start_agent(agent_id: str):
         """启动 worker 进程 (后台异步执行,立即返回)."""
@@ -262,6 +499,80 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
             stderr=subprocess.STDOUT,
         )
         return {"ok": True, "process": {"agent_id": agent_id, "pid": p.pid}}
+
+    @app.post("/api/agents/{agent_id}/create")
+    def create_agent(agent_id: str, body: dict = Body(...)):
+        """创建新的 worker，可选择使用已有 workspace 或创建新的。"""
+        from .worker_factory import _init_workspace
+        
+        cli_type = body.get("cli_type", "mock")
+        use_existing_workspace = body.get("use_existing_workspace", False)
+        existing_workspace_name = body.get("existing_workspace_name", "")
+        role = body.get("role", "")
+        system_prompt = body.get("system_prompt", "")
+        skills = body.get("skills", [])
+        mcp_servers = body.get("mcp_servers", [])
+        subscriptions = body.get("subscriptions", [])  # 订阅频道列表
+        
+        # 确定 workspace 目录
+        if use_existing_workspace and existing_workspace_name:
+            # 使用已有的 workspace
+            ws_dir = data_dir / "workspaces" / existing_workspace_name
+            if not ws_dir.exists():
+                raise HTTPException(404, f"Workspace '{existing_workspace_name}' not found")
+        else:
+            # 创建新的 workspace
+            ws_dir = data_dir / "workspaces" / agent_id
+            _init_workspace(
+                workspace_dir=ws_dir,
+                cli_name=cli_type,
+                role=role or agent_id,
+                system_prompt=system_prompt,
+                skills=skills if skills else None,
+                mcp_servers=mcp_servers if mcp_servers else None,
+                role_template="",
+                use_default_prompt=True,
+                subscriptions=subscriptions if subscriptions else None,  # 传递订阅列表
+            )
+        
+        # 创建 mailbox
+        mb_path = data_dir / "mailboxes" / f"{agent_id}.json"
+        if not mb_path.exists():
+            mb_path.write_text(
+                json.dumps({"agent": agent_id, "pending": []}, ensure_ascii=False),
+                encoding="utf-8"
+            )
+        
+        # 如果有订阅，保存到 subscriptions.json
+        if subscriptions:
+            workspace_dir = data_dir / "workspaces" / agent_id
+            subs_file = workspace_dir / "subscriptions.json"
+            subs_file.write_text(json.dumps(subscriptions, ensure_ascii=False), encoding="utf-8")
+        
+        # 更新 config.json，添加 subscriptions 字段（移除 mode）
+        config_path = ws_dir / "config.json"
+        if config_path.exists():
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    config = json.load(f)
+                # 移除 mode 字段（如果存在）
+                config.pop("mode", None)
+                # 添加 subscriptions
+                if subscriptions:
+                    config["subscriptions"] = subscriptions
+                elif "subscriptions" in config:
+                    config.pop("subscriptions", None)
+                with open(config_path, "w", encoding="utf-8") as f:
+                    json.dump(config, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f"[WARN] Failed to update config.json: {e}")
+        
+        return {
+            "ok": True,
+            "agent_id": agent_id,
+            "workspace": str(ws_dir),
+            "used_existing": use_existing_workspace and existing_workspace_name
+        }
 
     @app.post("/api/agents/{agent_id}/stop")
     def stop_agent(agent_id: str):
@@ -392,6 +703,100 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
         sb = StateBoard(data_dir / "state_board.json")
         tasks = len(sb.list_all())
         return {"channels": channels, "agents": agents, "tasks": tasks}
+
+    @app.get("/api/workspaces")
+    def list_workspaces():
+        """列出所有可用的 workspace 目录."""
+        ws_dir = data_dir / "workspaces"
+        if not ws_dir.exists():
+            return {"workspaces": []}
+        
+        workspaces = []
+        for d in ws_dir.iterdir():
+            if d.is_dir():
+                # 检查是否有 roles.md
+                has_roles = (d / "roles.md").exists()
+                # 获取 CLI 类型
+                cli_type = "unknown"
+                for cli_name in ["opencode", "qwen", "mock"]:
+                    if (d / f"{cli_name}.md").exists():
+                        cli_type = cli_name
+                        break
+                
+                workspaces.append({
+                    "name": d.name,
+                    "path": str(d),
+                    "has_roles": has_roles,
+                    "cli_type": cli_type,
+                    "created_at": d.stat().st_mtime
+                })
+        
+        # 按创建时间排序
+        workspaces.sort(key=lambda x: x["created_at"], reverse=True)
+        return {"workspaces": workspaces}
+
+    @app.get("/api/channels/{name}/member-status")
+    def get_channel_member_status(name: str):
+        """获取频道成员的实时状态，包括当前 prompt 和处理状态。"""
+        ch_path = data_dir / "channels" / f"{name}.jsonl"
+        if not ch_path.exists():
+            raise HTTPException(404, f"channel {name} not found")
+        
+        ch = Channel(ch_path, name)
+        members = ch.list_members()
+        
+        member_statuses = []
+        for member_id in members:
+            # 获取 worker 的 session 状态
+            sessions_dir = data_dir / "sessions"
+            sm_path = sessions_dir / f"{member_id}.json"
+            
+            status = {
+                "agent_id": member_id,
+                "status": "idle",  # idle, processing, waiting
+                "current_session": None,
+                "current_prompt": None,
+                "progress": 0,
+                "last_activity": None
+            }
+            
+            if sm_path.exists():
+                try:
+                    sm = SessionManager(sm_path, member_id)
+                    active_sessions = sm.list_active()
+                    
+                    if active_sessions:
+                        # 取第一个活跃 session
+                        session = active_sessions[0]
+                        status["status"] = "processing"
+                        status["current_session"] = {
+                            "session_id": session.session_id,
+                            "topic": session.topic,
+                            "progress": session.progress,
+                            "next_action": session.next_action
+                        }
+                        status["progress"] = session.progress
+                        
+                        # 尝试从 workspace 获取当前 prompt
+                        workspace_dir = data_dir / "workspaces" / member_id
+                        if workspace_dir.exists():
+                            # 检查是否有正在执行的 prompt 文件
+                            prompt_file = workspace_dir / "current_prompt.txt"
+                            if prompt_file.exists():
+                                status["current_prompt"] = prompt_file.read_text()[:500]  # 限制长度
+                    else:
+                        status["status"] = "idle"
+                        
+                except Exception as e:
+                    print(f"Error getting status for {member_id}: {e}")
+            
+            member_statuses.append(status)
+        
+        return {
+            "channel": name,
+            "members": member_statuses,
+            "total_members": len(members)
+        }
 
     # -------------------------------------------------------------------------
     # WebUI Static

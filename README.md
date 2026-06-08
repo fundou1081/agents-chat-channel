@@ -20,9 +20,29 @@
 
 ## 快速开始
 
+### 使用 Conda 环境 (推荐)
+
+```bash
+# 创建 conda 环境
+conda env create -f environment.yml
+conda activate agents-chat-channel
+
+# 安装项目
+pip install -e .
+```
+
+### 使用 pip
+
 ```bash
 # 安装
 pip install -e .
+
+# 或者使用虚拟环境
+python -m venv .venv
+source .venv/bin/activate  # Linux/Mac
+# .venv\Scripts\activate   # Windows
+pip install -e .
+```
 
 # 初始化数据目录
 python -m agents_chat.v2.main init --data-dir ./data_v2

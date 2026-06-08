@@ -30,28 +30,17 @@
     <!-- 左侧导航 -->
     <nav class="sidebar">
       <ul>
-        <li class="nav-item active" data-view="dashboard">
-          <span class="icon">📊</span> 总览
-        </li>
-        <li class="nav-item" data-view="channels">
-          <span class="icon">💬</span> 频道
+        <li class="nav-item active" data-view="channels">
+          <span class="icon">💬</span> 频道管理
           <span class="badge" id="badge-channels">0</span>
+        </li>
+        <li class="nav-item" data-view="live-chat">
+          <span class="icon">🔴</span> 实时聊天
+          <span class="badge live-indicator" id="badge-live">●</span>
         </li>
         <li class="nav-item" data-view="workers">
           <span class="icon">🤖</span> Workers
           <span class="badge" id="badge-workers">0</span>
-        </li>
-        <li class="nav-item" data-view="mailboxes">
-          <span class="icon">📥</span> 邮箱
-        </li>
-        <li class="nav-item" data-view="sessions">
-          <span class="icon">💭</span> Sessions
-        </li>
-        <li class="nav-item" data-view="state-board">
-          <span class="icon">📋</span> 任务板
-        </li>
-        <li class="nav-item" data-view="stats">
-          <span class="icon">📈</span> 统计
         </li>
       </ul>
 
@@ -65,24 +54,60 @@
 
     <!-- 主内容区 -->
     <main class="content">
-      <!-- 总览 -->
-      <section id="view-dashboard" class="view active">
-        <div id="dashboard-content">
-          <div class="loading">加载中...</div>
+      <!-- 频道管理 -->
+      <section id="view-channels" class="view active">
+        <div class="view-header">
+          <h2>💬 频道管理</h2>
+          <button class="btn btn-primary" onclick="showNewChannelModal()">+ 新建频道</button>
+        </div>
+        <div class="channel-management-layout">
+          <div class="channel-list-panel" id="channel-list-panel">
+            <div class="loading">加载中...</div>
+          </div>
+          <div class="channel-detail-panel" id="channel-detail-panel">
+            <div class="empty-state">← 选择一个频道查看详情</div>
+          </div>
         </div>
       </section>
 
-      <!-- 频道 -->
-      <section id="view-channels" class="view">
+      <!-- 实时聊天 -->
+      <section id="view-live-chat" class="view">
         <div class="view-header">
-          <h2>💬 频道</h2>
-        </div>
-        <div class="channel-layout">
-          <div class="channel-list" id="channel-list">
-            <div class="loading">加载中...</div>
+          <h2>🔴 实时聊天</h2>
+          <div class="live-controls">
+            <select id="live-channel-select">
+              <option value="">选择频道...</option>
+            </select>
+            <label class="auto-scroll">
+              <input type="checkbox" id="auto-scroll-check" checked> 自动滚动
+            </label>
           </div>
-          <div class="channel-detail" id="channel-detail">
-            <div class="empty-state">← 选择一个频道</div>
+        </div>
+        <div class="live-chat-container">
+          <div class="live-chat-messages" id="live-chat-messages">
+            <div class="empty-state">选择一个频道开始观察</div>
+          </div>
+          <div class="live-chat-input">
+            <div class="mention-selector">
+              <span class="mention-label">发送给:</span>
+              <button class="mention-btn mention-all" onclick="selectAllMentions()" title="发送给所有成员">@All</button>
+              <div class="mention-members" id="mention-members">
+                <!-- 动态生成成员按钮 -->
+              </div>
+            </div>
+            <div class="input-row">
+              <input type="text" id="live-from" value="god" placeholder="发送者">
+            </div>
+            <div class="input-row">
+              <textarea id="live-content" rows="3" placeholder="输入消息... 使用 @成员名 或 @All 来提及 (Enter 发送, Shift+Enter 换行)"></textarea>
+              <button class="btn btn-primary" onclick="sendLiveMessage()">发送</button>
+            </div>
+            <div class="mention-autocomplete" id="mention-autocomplete">
+              <!-- 自动补全下拉框 -->
+            </div>
+            <div class="mention-hint">
+              💡 提示: 在输入框中输入 @ 可以触发成员自动补全
+            </div>
           </div>
         </div>
       </section>
@@ -93,56 +118,6 @@
           <h2>🤖 Workers</h2>
         </div>
         <div id="workers-list">
-          <div class="loading">加载中...</div>
-        </div>
-      </section>
-
-      <!-- 邮箱 -->
-      <section id="view-mailboxes" class="view">
-        <div class="view-header">
-          <h2>📥 邮箱</h2>
-        </div>
-        <div class="mailbox-layout">
-          <div class="mailbox-list" id="mailbox-list">
-            <div class="loading">加载中...</div>
-          </div>
-          <div class="mailbox-detail" id="mailbox-detail">
-            <div class="empty-state">← 选择一个 worker</div>
-          </div>
-        </div>
-      </section>
-
-      <!-- Sessions -->
-      <section id="view-sessions" class="view">
-        <div class="view-header">
-          <h2>💭 Sessions</h2>
-        </div>
-        <div class="session-layout">
-          <div class="session-list" id="session-list">
-            <div class="loading">加载中...</div>
-          </div>
-          <div class="session-detail" id="session-detail">
-            <div class="empty-state">← 选择一个 worker</div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 任务板 -->
-      <section id="view-state-board" class="view">
-        <div class="view-header">
-          <h2>📋 任务板</h2>
-        </div>
-        <div id="state-board-list">
-          <div class="loading">加载中...</div>
-        </div>
-      </section>
-
-      <!-- 统计 -->
-      <section id="view-stats" class="view">
-        <div class="view-header">
-          <h2>📈 统计</h2>
-        </div>
-        <div id="stats-content">
           <div class="loading">加载中...</div>
         </div>
       </section>
@@ -205,19 +180,70 @@
 
   <!-- 新建 Worker modal -->
   <div id="new-worker-modal" class="modal hidden">
-    <div class="modal-content">
+    <div class="modal-content modal-large">
       <h3>+ 新建 Worker</h3>
+      
+      <!-- 基本信息 -->
       <div class="form-row">
         <label>Worker ID:</label>
         <input type="text" id="new-worker-id" placeholder="my-worker">
       </div>
+      
       <div class="form-row">
-        <label>模式:</label>
-        <select id="new-worker-mode">
-          <option value="passive">passive (等 @mention)</option>
-          <option value="proactive">proactive (订阅频道)</option>
+        <label>CLI 类型:</label>
+        <select id="new-worker-cli">
+          <option value="mock">Mock (测试用)</option>
+          <option value="opencode">OpenCode</option>
+          <option value="qwen">Qwen</option>
         </select>
       </div>
+      
+      <!-- Workspace 配置 -->
+      <div class="workspace-config">
+        <div class="config-header">
+          <label>Workspace 配置:</label>
+          <div class="workspace-toggle">
+            <label class="toggle-option">
+              <input type="radio" name="workspace-type" value="new" checked onchange="toggleWorkspaceType()">
+              <span>创建新 Workspace</span>
+            </label>
+            <label class="toggle-option">
+              <input type="radio" name="workspace-type" value="existing" onchange="toggleWorkspaceType()">
+              <span>使用已有 Workspace</span>
+            </label>
+          </div>
+        </div>
+        
+        <!-- 新 Workspace 选项 -->
+        <div id="new-workspace-options" class="workspace-options">
+          <div class="form-row">
+            <label>角色名称:</label>
+            <input type="text" id="new-worker-role" placeholder="如: 卖鱼小贩">
+          </div>
+          <div class="form-row">
+            <label>系统提示:</label>
+            <textarea id="new-worker-prompt" rows="3" placeholder="自定义 system prompt (留空使用默认模板)"></textarea>
+          </div>
+          <div class="form-row">
+            <label>Skills (逗号分隔):</label>
+            <input type="text" id="new-worker-skills" placeholder="如: bargaining, negotiation">
+          </div>
+        </div>
+        
+        <!-- 已有 Workspace 选项 -->
+        <div id="existing-workspace-options" class="workspace-options hidden">
+          <div class="form-row">
+            <label>选择 Workspace:</label>
+            <select id="existing-workspace-select">
+              <option value="">加载中...</option>
+            </select>
+          </div>
+          <div class="workspace-info" id="workspace-info">
+            <!-- 动态显示 workspace 信息 -->
+          </div>
+        </div>
+      </div>
+      
       <div class="form-actions">
         <button class="btn" onclick="hideNewWorkerModal()">取消</button>
         <button class="btn btn-primary" onclick="createWorker()">创建</button>

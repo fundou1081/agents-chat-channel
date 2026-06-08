@@ -185,18 +185,19 @@ class Agent:
         return set(self.subscriptions)
 
     async def run(self):
-        """主循环. 根据 mode 选 passive/proactive."""
-        print(f"[{self.agent_id}] ▶ run (mode={self.mode}, subscriptions={list(self.subscriptions)})")
+        """主循环. 同时处理被动和主动模式."""
+        print(f"[{self.agent_id}] ▶ run (subscriptions={list(self.subscriptions)})")
         self._run_task = asyncio.current_task()
         try:
-            if self.mode == "proactive" and self.subscriptions:
-                # 主动模式: 订阅频道 + 轮询
+            # 如果有订阅，启动主动轮询
+            if self.subscriptions:
                 for ch in self.subscriptions:
                     self.event_handler.add_subscription(ch)
-                await self.event_handler.run_proactive()
-            else:
-                # 被动模式: 等 mail 事件
-                await self.event_handler.run()
+                # 后台运行 proactive 轮询
+                asyncio.create_task(self.event_handler.run_proactive())
+            
+            # 主循环：监听邮箱事件（被动模式）
+            await self.event_handler.run()
         except asyncio.CancelledError:
             print(f"[{self.agent_id}] run cancelled")
 

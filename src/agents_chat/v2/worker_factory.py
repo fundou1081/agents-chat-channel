@@ -358,6 +358,7 @@ class WorkspaceManager:
         cli_name: str = "opencode",
         role_template: str = "",
         extra_instructions: str = "",
+        subscriptions: list[str] | None = None,
     ) -> Path:
         """初始化 worker workspace.
 
@@ -369,6 +370,7 @@ class WorkspaceManager:
             cli_name: CLI 类型 ("opencode" / "qwen" / "claude" / "mock")
             role_template: 角色模板 (如果 system_prompt 为空, 用这个模板 + role 生成)
             extra_instructions: 额外指令文本 (写入 instructions/default.md)
+            subscriptions: 订阅频道列表（如果有，Worker 会主动轮询这些频道）
 
         Returns:
             workspace_dir 路径
@@ -396,7 +398,7 @@ class WorkspaceManager:
             )
 
         # 6. config.yaml (Worker 配置快照)
-        self._write_config(cli_name, role, skills or [], mcp_servers or [])
+        self._write_config(cli_name, role, skills or [], mcp_servers or [], subscriptions)
 
         return self.workspace_dir
 
@@ -473,7 +475,7 @@ class WorkspaceManager:
                     encoding="utf-8",
                 )
 
-    def _write_config(self, cli_name: str, role: str, skills: list, mcp_servers: list):
+    def _write_config(self, cli_name: str, role: str, skills: list, mcp_servers: list, subscriptions: list = None):
         import json
         cfg = {
             "agent_id": self.workspace_dir.name,
@@ -483,6 +485,8 @@ class WorkspaceManager:
             "mcp_servers": mcp_servers,
             "workspace": str(self.workspace_dir),
         }
+        if subscriptions:
+            cfg["subscriptions"] = subscriptions
         cfg_path = self.workspace_dir / "config.json"
         with open(cfg_path, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
@@ -536,11 +540,13 @@ def _init_workspace(
     mcp_servers: list[str] | None,
     role_template: str,
     use_default_prompt: bool = True,
+    subscriptions: list[str] | None = None,
 ) -> Path:
     """初始化 worker workspace (内部 helper).
 
     Args:
         use_default_prompt: True=如果 system_prompt 和 role_template 都为空, 用默认 5 条规则模板
+        subscriptions: 订阅频道列表（如果有，Worker 会主动轮询这些频道）
     """
     wm = WorkspaceManager(workspace_dir)
     # 如果 workspace 已有 roles.md, 不覆盖 (保留用户编辑)
@@ -570,5 +576,6 @@ def _init_workspace(
         mcp_servers=mcp_servers,
         cli_name=cli_name,
         role_template=role_template,
+        subscriptions=subscriptions,
     )
     return workspace_dir

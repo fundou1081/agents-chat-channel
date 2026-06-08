@@ -46,8 +46,6 @@ class Channel:
         self.path = Path(path)
         self.name = name or self.path.stem
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        # max_messages: 频道最大消息数. 0=不限制. 超过时自动 trim 旧消息.
-        self.max_messages = max_messages
         # metadata sidecar: channels/{name}.meta.json
         self.meta_path = self.path.with_suffix(self.path.suffix + ".meta.json")
         # touch JSONL
@@ -55,7 +53,12 @@ class Channel:
             self.path.touch()
         # touch metadata
         if not self.meta_path.exists():
-            self._save_meta({"name": self.name, "members": [], "admins": [], "created_by": "", "created_at": ""})
+            self._save_meta({"name": self.name, "members": [], "admins": [], "created_by": "", "created_at": "", "max_messages": 0})
+        # max_messages: 优先用参数, 否则从 meta 加载
+        if max_messages > 0:
+            self.max_messages = max_messages
+        else:
+            self.max_messages = self._load_meta().get("max_messages", 0)
 
     # ------------------------------------------------------------------
     # Metadata (members / admins)
@@ -66,7 +69,8 @@ class Channel:
             return {
                 "name": self.name, "members": [], "admins": [],
                 "human_admins": [], "admin_types": {},
-                "enabled_workers": [],   # 空=不限制, 有值=只允许这些 worker 收消息
+                "enabled_workers": [],   # 空=不限制
+                "max_messages": 0,
                 "created_by": "", "created_at": "",
             }
         try:
@@ -77,13 +81,15 @@ class Channel:
             data.setdefault("admin_types", {})
             data.setdefault("members", [])
             data.setdefault("admins", [])
-            data.setdefault("enabled_workers", [])  # 新: worker 白名单
+            data.setdefault("enabled_workers", [])
+            data.setdefault("max_messages", 0)
             return data
         except (json.JSONDecodeError, OSError):
             return {
                 "name": self.name, "members": [], "admins": [],
                 "human_admins": [], "admin_types": {},
                 "enabled_workers": [],
+                "max_messages": 0,
                 "created_by": "", "created_at": "",
             }
 
@@ -109,6 +115,20 @@ class Channel:
         if agent_id in meta.get("members", []):
             return False
         meta.setdefault("members", []).append(agent_id)
+        self._save_meta(meta)
+        return True
+
+    def remove_member(self, agent_id: str) -> bool:
+        """移除成员. 返回 True=成功移除, False=不存在."""
+        meta = self._load_meta()
+        members = meta.get("members", [])
+        if agent_id not in members:
+            return False
+        members.remove(agent_id)
+        # 如果也是 admin，一并移除
+        if agent_id in meta.get("admins", []):
+            meta["admins"].remove(agent_id)
+            meta.get("admin_types", {}).pop(agent_id, None)
         self._save_meta(meta)
         return True
 
