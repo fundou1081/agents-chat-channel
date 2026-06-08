@@ -134,15 +134,15 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
         for ch_path in sorted((data_dir / "channels").glob("*.jsonl")):
             name = ch_path.stem  # "general" from "general.jsonl"
             ch = Channel(ch_path, name)
-            msgs = ch.read(tail=1)
+            msgs = ch.tail(1)
             channels.append({
                 "name": name,
-                "messages": ch.count(),
+                "messages": len(ch),
                 "members": ch.list_members(),
                 "admins": ch.list_admins(),
                 "human_admins": ch.list_human_admins(),
             })
-        return {"channels": channels, "count": len(channels)}
+        return channels
 
     @app.get("/api/channels/{name}/messages")
     def get_channel_messages(
@@ -191,6 +191,8 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
             "members": ch.list_members(),
             "admins": ch.list_admins(),
             "human_admins": ch.list_human_admins(),
+            "enabled_workers": ch.list_enabled_workers(),
+            "max_messages": ch.max_messages,
         }
 
     @app.post("/api/channels/{name}/members")
@@ -228,7 +230,7 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
                 "pending": len(pending),
                 "log_path": str(data_dir / "logs" / f"{agent_id}.log"),
             })
-        return {"agents": agents, "count": len(agents)}
+        return agents
 
     @app.get("/api/agents/{agent_id}")
     def get_agent(agent_id: str):
@@ -304,13 +306,13 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
     def get_sessions(agent_id: str):
         sessions_dir = data_dir / "sessions"
         sm = SessionManager(sessions_dir / f"{agent_id}.json", agent_id)
-        return {"sessions": [s.to_dict() for s in sm.list_all()], "count": len(sm.list_all())}
+        return {"sessions": [s.to_dict() for s in sm.list_all()]}
 
     @app.get("/api/sessions/{agent_id}/active")
     def get_active_sessions(agent_id: str):
         sessions_dir = data_dir / "sessions"
         sm = SessionManager(sessions_dir / f"{agent_id}.json", agent_id)
-        return {"sessions": [s.to_dict() for s in sm.list_active()], "count": len(sm.list_active())}
+        return {"sessions": [s.to_dict() for s in sm.list_active()]}
 
     # -------------------------------------------------------------------------
     # State Board
@@ -380,7 +382,7 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
     # WebUI Static
     # -------------------------------------------------------------------------
 
-    webui_dir = Path(__file__).parent.parent.parent / "webui"
+    webui_dir = Path(__file__).parent.parent.parent.parent / "webui"
     if webui_dir.exists():
         app.mount("/webui", StaticFiles(directory=str(webui_dir), html=True), name="webui")
 

@@ -715,3 +715,146 @@ pre, code {
   border-radius: 3px;
   font-size: 12px;
 }
+
+/* === 新增样式 === */
+
+.section { margin: 24px 0; }
+.section h3 { font-size: 16px; margin-bottom: 12px; color: var(--text); }
+.section h4 { font-size: 14px; margin: 16px 0 8px; color: var(--text-secondary); }
+
+.quick-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+
+.recent-messages { display: flex; flex-direction: column; gap: 4px; }
+.msg-item {
+  display: grid;
+  grid-template-columns: 80px 80px 1fr 60px;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.msg-item:hover { background: var(--bg-hover); }
+.msg-channel { color: var(--accent); font-weight: 600; }
+.msg-from { color: var(--text-secondary); }
+.msg-content { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-time { color: var(--text-tertiary); font-size: 12px; text-align: right; }
+
+.card-icon { font-size: 28px; margin-bottom: 8px; }
+
+/* Channel detail */
+.channel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.channel-header h3 { margin: 0; }
+.channel-actions { display: flex; gap: 8px; }
+
+.channel-meta-info { background: var(--bg-secondary); border-radius: 6px; padding: 12px; margin-bottom: 16px; }
+.meta-row { display: flex; gap: 8px; font-size: 13px; padding: 4px 0; }
+.meta-label { color: var(--text-secondary); font-weight: 600; min-width: 80px; }
+
+.channel-members { margin-bottom: 16px; }
+.member-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+.member-row input[type="text"] { flex: 1; }
+
+.channel-messages { margin-bottom: 16px; }
+.msg-count { color: var(--text-secondary); font-size: 12px; }
+.messages-list { max-height: 400px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
+.msg-row {
+  display: grid;
+  grid-template-columns: 60px 80px 80px 80px 1fr;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  align-items: start;
+}
+.msg-row:last-child { border-bottom: none; }
+.msg-row:hover { background: var(--bg-hover); }
+.msg-row.msg-god { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.msg-ts { color: var(--text-tertiary); font-size: 11px; }
+.msg-from { color: var(--accent); font-weight: 600; }
+.msg-mentions { color: var(--text-secondary); font-size: 11px; }
+.msg-type { color: var(--text-tertiary); font-size: 10px; }
+.msg-content { color: var(--text); word-break: break-word; }
+
+.channel-send { margin-top: 16px; }
+.send-row { margin-bottom: 8px; }
+.send-row textarea, .send-row input { width: 100%; }
+.send-row select { width: 100%; padding: 6px; }
+
+/* Worker cards */
+.workers-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+.worker-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+}
+.worker-header { display: flex; justify-content: space-between; margin-bottom: 12px; }
+.worker-name { font-size: 16px; font-weight: 700; color: var(--text); }
+.worker-status { font-size: 12px; padding: 2px 8px; border-radius: 12px; }
+.worker-status.has-mail { background: var(--warning); color: var(--bg); }
+.worker-status.idle { background: var(--success); color: var(--bg); }
+.worker-info { margin-bottom: 12px; }
+.info-row { font-size: 12px; color: var(--text-secondary); margin: 2px 0; }
+.path { color: var(--text-tertiary); font-family: monospace; font-size: 11px; }
+.worker-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* Mailbox */
+.mailbox-item { display: flex; justify-content: space-between; padding: 10px 12px; cursor: pointer; border-bottom: 1px solid var(--border); }
+.mailbox-item:hover { background: var(--bg-hover); }
+.mailbox-item.active { background: var(--bg-tertiary); border-left: 3px solid var(--accent); }
+.mailbox-name { font-weight: 600; }
+.mailbox-count { color: var(--text-secondary); font-size: 12px; }
+
+.mails-list { display: flex; flex-direction: column; gap: 8px; }
+.mail-item { background: var(--bg-secondary); border-radius: 6px; padding: 12px; }
+.mail-header { display: flex; gap: 12px; font-size: 12px; margin-bottom: 8px; color: var(--text-secondary); }
+.mail-from { color: var(--accent); }
+.mail-content { font-size: 13px; line-height: 1.5; word-break: break-word; }
+.mail-count { background: var(--bg-tertiary); padding: 2px 8px; border-radius: 10px; font-size: 12px; }
+
+/* Sessions */
+.session-item { padding: 10px 12px; cursor: pointer; border-bottom: 1px solid var(--border); }
+.session-item:hover { background: var(--bg-hover); }
+.session-item.active { background: var(--bg-tertiary); border-left: 3px solid var(--accent); }
+.session-name { font-weight: 600; }
+
+.sessions-list { display: flex; flex-direction: column; gap: 8px; }
+.session-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+}
+.session-card.active { border-color: var(--success); }
+.session-id { font-size: 12px; color: var(--accent); font-weight: 600; margin-bottom: 4px; }
+.session-topic { font-size: 13px; margin-bottom: 8px; }
+.session-meta { display: flex; gap: 12px; font-size: 12px; color: var(--text-secondary); }
+.session-meta .progress { color: var(--accent); font-weight: 600; }
+.session-meta .next-action { color: var(--text); }
+.session-meta .confidence { color: var(--success); }
+.sess-active { background: var(--success); color: var(--bg); padding: 2px 8px; border-radius: 10px; font-size: 12px; }
+
+/* Tasks */
+.tasks-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+.task-card { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+.task-id { font-size: 14px; font-weight: 700; color: var(--accent); margin-bottom: 8px; }
+.task-status { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+.task-progress { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.progress-bar { flex: 1; height: 6px; background: var(--bg-tertiary); border-radius: 3px; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--accent); transition: width 0.3s; }
+.task-summary { font-size: 13px; margin-bottom: 4px; }
+.task-next { font-size: 12px; color: var(--text-secondary); }
+
+/* Stats */
+.path { font-family: monospace; font-size: 11px; color: var(--text-tertiary); }
+
+/* Btn variants */
+.btn-sm { font-size: 12px; padding: 4px 10px; }
+.btn-warn { background: var(--danger); color: #fff; }
+
+/* Utilities */
+.loading { padding: 20px; text-align: center; color: var(--text-secondary); }
+.empty-state { padding: 24px; text-align: center; color: var(--text-tertiary); }
+.error { padding: 16px; background: color-mix(in srgb, var(--danger) 15%, transparent); border: 1px solid var(--danger); border-radius: 6px; color: var(--danger); margin: 8px 0; }

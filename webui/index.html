@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>agents-chat-channel · 控制台</title>
+  <title>agents-chat-channel · 控制台 v2.0</title>
   <link rel="stylesheet" href="/webui/style.css">
 </head>
 <body>
@@ -15,13 +15,13 @@
       <span id="conn-text">连接中...</span>
       <label class="auto-refresh">
         <input type="checkbox" id="auto-refresh" checked> 自动刷新
-        <select id="refresh-interval">
-          <option value="2000">2s</option>
-          <option value="5000" selected>5s</option>
-          <option value="10000">10s</option>
-          <option value="30000">30s</option>
-        </select>
       </label>
+      <select id="refresh-interval">
+        <option value="2000">2s</option>
+        <option value="5000" selected>5s</option>
+        <option value="10000">10s</option>
+        <option value="30000">30s</option>
+      </select>
       <button id="refresh-btn" class="btn">↻ 刷新</button>
     </div>
   </header>
@@ -56,7 +56,7 @@
       </ul>
 
       <div class="sidebar-section">
-        <h3>快速操作</h3>
+        <h3>快捷操作</h3>
         <button class="btn btn-primary" onclick="showSendModal()">✉️ 发送消息</button>
         <button class="btn" onclick="showNewChannelModal()">+ 新建频道</button>
         <button class="btn" onclick="showNewWorkerModal()">+ 新建 Worker</button>
@@ -67,21 +67,9 @@
     <main class="content">
       <!-- 总览 -->
       <section id="view-dashboard" class="view active">
-        <h2>📊 系统总览</h2>
-        <div class="card-grid">
-          <div class="card">
-            <div class="card-label">Workers</div>
-            <div class="card-value" id="stat-agents">-</div>
-            <div class="card-sub" id="stat-agents-sub"></div>
-          </div>
-          <div class="card">
-            <div class="card-label">频道</div>
-            <div class="card-value" id="stat-channels">-</div>
-          </div>
+        <div id="dashboard-content">
+          <div class="loading">加载中...</div>
         </div>
-
-        <h3>最近活动</h3>
-        <div id="dashboard-activity" class="activity-feed"></div>
       </section>
 
       <!-- 频道 -->
@@ -90,7 +78,9 @@
           <h2>💬 频道</h2>
         </div>
         <div class="channel-layout">
-          <div class="channel-list" id="channel-list"></div>
+          <div class="channel-list" id="channel-list">
+            <div class="loading">加载中...</div>
+          </div>
           <div class="channel-detail" id="channel-detail">
             <div class="empty-state">← 选择一个频道</div>
           </div>
@@ -102,7 +92,9 @@
         <div class="view-header">
           <h2>🤖 Workers</h2>
         </div>
-        <div id="workers-list"></div>
+        <div id="workers-list">
+          <div class="loading">加载中...</div>
+        </div>
       </section>
 
       <!-- 邮箱 -->
@@ -111,7 +103,9 @@
           <h2>📥 邮箱</h2>
         </div>
         <div class="mailbox-layout">
-          <div class="mailbox-list" id="mailbox-list"></div>
+          <div class="mailbox-list" id="mailbox-list">
+            <div class="loading">加载中...</div>
+          </div>
           <div class="mailbox-detail" id="mailbox-detail">
             <div class="empty-state">← 选择一个 worker</div>
           </div>
@@ -124,7 +118,9 @@
           <h2>💭 Sessions</h2>
         </div>
         <div class="session-layout">
-          <div class="session-list" id="session-list"></div>
+          <div class="session-list" id="session-list">
+            <div class="loading">加载中...</div>
+          </div>
           <div class="session-detail" id="session-detail">
             <div class="empty-state">← 选择一个 worker</div>
           </div>
@@ -136,7 +132,9 @@
         <div class="view-header">
           <h2>📋 任务板</h2>
         </div>
-        <div id="state-board-list"></div>
+        <div id="state-board-list">
+          <div class="loading">加载中...</div>
+        </div>
       </section>
 
       <!-- 统计 -->
@@ -144,7 +142,9 @@
         <div class="view-header">
           <h2>📈 统计</h2>
         </div>
-        <div id="stats-content"></div>
+        <div id="stats-content">
+          <div class="loading">加载中...</div>
+        </div>
       </section>
     </main>
   </div>
@@ -166,6 +166,7 @@
         <select id="send-type">
           <option value="mention">mention (广播)</option>
           <option value="task_broadcast">task_broadcast (任务)</option>
+          <option value="text">text</option>
         </select>
       </div>
       <div class="form-row">
@@ -191,6 +192,10 @@
         <label>频道名:</label>
         <input type="text" id="new-channel-name" placeholder="my-channel">
       </div>
+      <div class="form-row">
+        <label>最大消息数 (0=不限制):</label>
+        <input type="number" id="new-channel-max" value="0" min="0" placeholder="0">
+      </div>
       <div class="form-actions">
         <button class="btn" onclick="hideNewChannelModal()">取消</button>
         <button class="btn btn-primary" onclick="createChannel()">创建</button>
@@ -207,27 +212,11 @@
         <input type="text" id="new-worker-id" placeholder="my-worker">
       </div>
       <div class="form-row">
-        <label>CLI 类型:</label>
-        <select id="new-worker-cli">
-          <option value="opencode">opencode</option>
-          <option value="qwen">qwen</option>
-          <option value="mock">mock (测试)</option>
-        </select>
-      </div>
-      <div class="form-row">
-        <label>角色 (role):</label>
-        <input type="text" id="new-worker-role" placeholder="数据分析师">
-      </div>
-      <div class="form-row">
         <label>模式:</label>
         <select id="new-worker-mode">
           <option value="passive">passive (等 @mention)</option>
-          <option value="proactive">proactive (订阅)</option>
+          <option value="proactive">proactive (订阅频道)</option>
         </select>
-      </div>
-      <div class="form-row">
-        <label>订阅频道 (逗号分隔, 可选):</label>
-        <input type="text" id="new-worker-subs" placeholder="general, fish-market">
       </div>
       <div class="form-actions">
         <button class="btn" onclick="hideNewWorkerModal()">取消</button>
