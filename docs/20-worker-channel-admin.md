@@ -220,3 +220,73 @@ worker = WorkerFactory.create(
 ### 保留用户编辑
 
 如果 `roles.md` 已存在, `_init_workspace` 会**合并** (追加 system_prompt), 不覆盖用户编辑.
+
+
+## 6. DEFAULT_WORKER_PROMPT_TEMPLATE (Worker 基础 prompt)
+
+所有 Worker 都有**默认基础 prompt** (5 条通信规则),来自 `worker_factory.py`:
+
+```python
+DEFAULT_WORKER_PROMPT_TEMPLATE = """你是{agent_name}。{role}。
+
+你在一个多人协作频道中。频道管理员是你的上级。
+
+**频道通信规则 (必须严格遵守):**
+- 你的每一条回复, 必须在开头指定收信人, 格式: @名字
+- 例如: @{example_agent} 你好
+- 如果不确定对谁说, 就 @频道管理员
+- 频道管理员的指令立即执行, 不要确认 "收到"
+- 如果在角色扮演中, 收到对方台词就继续演, 保持角色不退出
+- 每次回复最后一行: [STATUS] 简述 | 下一步: xxx
+"""
+```
+
+### 优先级
+
+```
+system_prompt > role_template > DEFAULT_WORKER_PROMPT_TEMPLATE
+```
+
+| 传入 | 实际写入 roles.md |
+|------|------------------|
+| `system_prompt="X"` | "X" |
+| `role_template="Y", system_prompt=""` | "Y" (Y.format(role=role)) |
+| 两个都空 | DEFAULT_WORKER_PROMPT_TEMPLATE.format(agent_name=..., role=..., example_agent=...) |
+
+### CLI 文件名约定
+
+| CLI | 引导文件名 |
+|-----|-----------|
+| claude | `CLAUDE.md` |
+| qwen | `AGENTS.md` |
+| opencode | `AGENTS.md` (或 `opencode.md`) |
+| mock | (不需要) |
+
+### 用法
+
+```python
+# 1. 完全自定义
+worker = WorkerFactory.create(
+    agent_id="custom-fish",
+    cli_type="opencode",
+    system_prompt="你是超级鱼贩, 能算出最优价格",
+    # → roles.md = "你是超级鱼贩, 能算出最优价格"
+)
+
+# 2. 用 role_template 覆盖
+worker = WorkerFactory.create(
+    agent_id="fish-vendor",
+    cli_type="opencode",
+    role="鱼贩",
+    role_template="你是{role}, 卖鱼小贩. 策略: 开价 100.",
+    # → roles.md = "你是鱼贩, 卖鱼小贩. 策略: 开价 100."
+)
+
+# 3. 完全默认 (5 条规则 + 角色)
+worker = WorkerFactory.create(
+    agent_id="basic-worker",
+    cli_type="opencode",
+    role="数据分析师",
+    # → roles.md = DEFAULT 模板 (agent_name=basic-worker, role=数据分析师)
+)
+```

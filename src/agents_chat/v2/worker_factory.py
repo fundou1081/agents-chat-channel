@@ -49,6 +49,36 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
+# =============================================================================
+# 默认 Worker Prompt 模板
+# =============================================================================
+# 所有 Worker 的基础 prompt 模板 (5 条通信规则).
+# 通过 WorkerFactory.create() 的 system_prompt 或 role_template 覆盖.
+#
+# 变量:
+#   - {agent_name}   Worker ID
+#   - {role}          角色名称
+#   - {example_agent}  示例: 已有 agent 列表的第一个 (供"@对方"示例)
+#
+# CLI 文件名:
+#   - claude:   CLAUDE.md
+#   - qwen:     AGENTS.md
+#   - opencode: AGENTS.md (或 opencode.md)
+#   - mock:     不需要
+DEFAULT_WORKER_PROMPT_TEMPLATE = """你是{agent_name}。{role}。
+
+你在一个多人协作频道中。频道管理员是你的上级。
+
+**频道通信规则 (必须严格遵守):**
+- 你的每一条回复, 必须在开头指定收信人, 格式: @名字
+- 例如: @{example_agent} 你好
+- 如果不确定对谁说, 就 @频道管理员
+- 频道管理员的指令立即执行, 不要确认 "收到"
+- 如果在角色扮演中, 收到对方台词就继续演, 保持角色不退出
+- 每次回复最后一行: [STATUS] 简述 | 下一步: xxx
+"""
+
+
 class _CLIRegistry:
     """CLI 适配器注册表."""
 
@@ -505,17 +535,32 @@ def _init_workspace(
     skills: list[str] | None,
     mcp_servers: list[str] | None,
     role_template: str,
+    use_default_prompt: bool = True,
 ) -> Path:
-    """初始化 worker workspace (内部 helper)."""
+    """初始化 worker workspace (内部 helper).
+
+    Args:
+        use_default_prompt: True=如果 system_prompt 和 role_template 都为空, 用默认 5 条规则模板
+    """
     wm = WorkspaceManager(workspace_dir)
     # 如果 workspace 已有 roles.md, 不覆盖 (保留用户编辑)
     roles_path = workspace_dir / "roles.md"
     prompt_to_use = system_prompt
-    if roles_path.exists() and system_prompt:
-        # roles.md 已存在, 合并: 追加 system_prompt
+    # 没传 system_prompt 但有 role_template, 用模板生成
+    if not prompt_to_use and role_template:
+        prompt_to_use = role_template.format(role=role or "Worker")
+    # 都没传, 用默认 5 条规则模板
+    if not prompt_to_use and use_default_prompt:
+        prompt_to_use = DEFAULT_WORKER_PROMPT_TEMPLATE.format(
+            agent_name=workspace_dir.name,
+            role=role or "Worker",
+            example_agent="频道成员",
+        )
+    # 合并现有 roles.md
+    if roles_path.exists() and prompt_to_use:
         existing = roles_path.read_text(encoding="utf-8")
-        if system_prompt not in existing:
-            prompt_to_use = existing + "\n\n" + system_prompt
+        if prompt_to_use not in existing:
+            prompt_to_use = existing + "\n\n" + prompt_to_use
         else:
             prompt_to_use = existing
     wm.init(
