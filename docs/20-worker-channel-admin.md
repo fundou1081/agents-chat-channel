@@ -179,3 +179,44 @@ workers = WorkerFactory.create_all({
 for w in workers.values():
     asyncio.create_task(w.run())
 ```
+
+## 5. Workspace 目录结构
+
+每个 Worker 独立 workspace, 由 `WorkspaceManager` 自动创建:
+
+```
+workspaces/{agent_id}/
+├── roles.md           # Worker 角色定义 (strategy / 行为规则)
+├── {cli}.md           # CLI 引导文件 (opencode.md / qwen.md / claude.md)
+├── skills/            # 技能软链接 (指向全局 workspace_templates/skills/)
+│   ├── bargaining.md  → workspace_templates/skills/bargaining.md
+│   └── fish-pricing.md
+├── mcp/               # MCP 服务配置 stub
+│   └── fish-market-api.json
+├── instructions/      # 额外指令
+│   └── default.md
+└── config.json        # Worker 配置快照 (cli / role / skills / mcp_servers)
+```
+
+### 自动初始化
+
+`WorkerFactory.create(init_workspace=True)` 时自动调用:
+
+```python
+from agents_chat.v2.worker_factory import WorkerFactory
+
+worker = WorkerFactory.create(
+    agent_id="seller-fish",
+    cli_type="opencode",
+    data_dir=Path("./data_v2"),
+    role="卖鱼小贩",
+    role_template=SELLER_ROLE,
+    skills=["bargaining", "fish-pricing"],
+    mcp_servers=["fish-market-api"],
+    # → 自动创建 workspaces/seller-fish/{roles.md, opencode.md, skills/, mcp/, ...}
+)
+```
+
+### 保留用户编辑
+
+如果 `roles.md` 已存在, `_init_workspace` 会**合并** (追加 system_prompt), 不覆盖用户编辑.

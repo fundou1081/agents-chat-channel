@@ -53,43 +53,11 @@ echo "T=1  init"
 $VENV -m agents_chat.v2.main init --data-dir "$DATA_DIR" 2>&1 | tail -2
 
 # =============================================================================
-# 准备 workspace
+# WorkerFactory: 创建 workers (各自独立 workspace, 隔离配置)
+# 每个 worker 有自己的 roles.md + skills/ + mcp/ + instructions/
 # =============================================================================
-WS1="$DATA_DIR/workspaces/seller-fish"
-WS2="$DATA_DIR/workspaces/buyer-fish"
-mkdir -p "$WS1" "$WS2"
 
-cat > "$WS1/opencode.md" << 'EOF'
-# seller-fish 角色
-你是 seller-fish (卖鱼小贩). 跟 buyer-fish 讨价还价.
-策略: 开价 100, 最低 80, 理想 90.
-回复格式: 简短报价 + STATUS 块:
-<!--STATUS
- session_id: seller-sess
- task_id: bargain
- progress: <0-100>
- summary: <你说的>
- next_action: <等 buyer/成交>
- confidence: high
--->
-EOF
-
-cat > "$WS2/opencode.md" << 'EOF'
-# buyer-fish 角色
-你是 buyer-fish (买鱼顾客). 跟 seller-fish 讨价还价.
-策略: 预算 90, 起步 70, 90 就接受.
-回复格式: 简短还价或接受 + STATUS 块:
-<!--STATUS
- session_id: buyer-sess
- task_id: bargain
- progress: <0-100>
- summary: <你说的>
- next_action: <等 seller/成交>
- confidence: high
--->
-EOF
-
-echo "  ✓ workspace + opencode.md"
+echo "  ✓ workspace 配置已定义 (运行时自动创建 workspace 目录)"
 
 # =============================================================================
 # 配置频道 (admin=god 是管理员, 发第一条消息)
@@ -134,9 +102,8 @@ TIMEOUT_SECS_VAL=$TIMEOUT_SECS
 $VENV -c "
 import asyncio, sys, time
 sys.path.insert(0, 'src')
-from agents_chat.v2.agent import Agent
 from agents_chat.v2.scheduler import Scheduler
-from agents_chat.v2.cli.opencode import OpenCodeCLI
+from agents_chat.v2.worker_factory import WorkerFactory
 from agents_chat.v2.files.mailbox import Mailbox
 from pathlib import Path
 
@@ -148,25 +115,71 @@ TIMEOUT_SECS = $TIMEOUT_SECS_VAL
 for aid in ['seller-fish', 'buyer-fish', 'admin']:
     Mailbox(DATA_DIR / 'mailboxes' / f'{aid}.json', aid)
 
-cli = OpenCodeCLI(timeout_seconds=120)
+# 角色模板 (Python 多行字符串, 避免 bash 变量传递问题)
+SELLER_ROLE = '''你是 seller-fish (卖鱼小贩). 跟 buyer-fish 讨价还价卖鱼.
+策略: 开价 100, 最低 80, 理想 90.
+- 每次报价要留余地, 最后可以搭两条小黄鱼
+- 成交后要礼貌确认, 图个吉利数字
+回复格式: 简短报价 + STATUS 块:
+<!--STATUS
+ session_id: {session_id}
+ task_id: bargain
+ progress: <0-100>
+ summary: <你说的>
+ next_action: <等 buyer/成交>
+ confidence: high
+-->'''
 
-# 主动模式 agent: 订阅 fish-market
-agent_seller = Agent(
-    agent_id='seller-fish', cli=cli, data_dir=DATA_DIR,
-    workspace_dir=DATA_DIR/'workspaces'/'seller-fish',
-    poll_interval=3.0, default_channel='fish-market',
-    mode='proactive',
-    subscriptions=['fish-market'],
-    system_prompt='你是 seller-fish (卖鱼小贩). 跟 buyer-fish 讨价还价卖鱼. 策略: 开价 100, 最低 80, 理想 90.',
+BUYER_ROLE = '''你是 buyer-fish (买鱼顾客). 跟 seller-fish 讨价还价买鱼.
+策略: 预算 90, 起步 70, 90 就接受.
+- 先看 seller 开价, 然后还价
+- 可以接受搭赠品
+- 成交后要确认质量
+回复格式: 简短还价或接受 + STATUS 块:
+<!--STATUS
+ session_id: {session_id}
+ task_id: bargain
+ progress: <0-100>
+ summary: <你说的>
+ next_action: <等 seller/成交>
+ confidence: high
+-->'''
+
+# WorkerFactory: 创建 workers (各自独立 workspace, 隔离配置)
+# roles.md: 完整角色定义 (strategy/报价策略/回复格式)
+# skills: 技能 (软链接到全局 skills 目录)
+# mcp_servers: MCP 服务配置 (生成 stub JSON)
+workers = WorkerFactory.create_all(
+    {
+        'seller-fish': {
+            'cli_type': 'opencode',
+            'mode': 'proactive',
+            'subscriptions': ['fish-market'],
+            'poll_interval': 3.0,
+            'default_channel': 'fish-market',
+            'role': '卖鱼小贩',
+            'role_template': SELLER_ROLE,
+            'skills': ['bargaining', 'fish-pricing'],
+            'mcp_servers': ['fish-market-api'],
+            'cli_config': {'timeout_seconds': 120},
+        },
+        'buyer-fish': {
+            'cli_type': 'opencode',
+            'mode': 'proactive',
+            'subscriptions': ['fish-market'],
+            'poll_interval': 3.0,
+            'default_channel': 'fish-market',
+            'role': '买鱼顾客',
+            'role_template': BUYER_ROLE,
+            'skills': ['bargaining', 'budget-management'],
+            'mcp_servers': ['payment-service'],
+            'cli_config': {'timeout_seconds': 120},
+        },
+    },
+    data_dir=DATA_DIR,
 )
-agent_buyer = Agent(
-    agent_id='buyer-fish', cli=cli, data_dir=DATA_DIR,
-    workspace_dir=DATA_DIR/'workspaces'/'buyer-fish',
-    poll_interval=3.0, default_channel='fish-market',
-    mode='proactive',
-    subscriptions=['fish-market'],
-    system_prompt='你是 buyer-fish (买鱼顾客). 跟 seller-fish 讨价还价买鱼. 策略: 预算 90, 起步 70, 90 就接受.',
-)
+agent_seller = workers['seller-fish']
+agent_buyer = workers['buyer-fish']
 
 scheduler = Scheduler(data_dir=DATA_DIR, stale_ttl=60, grace_period=30, check_interval=15)
 

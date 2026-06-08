@@ -131,6 +131,12 @@ class WorkerFactory:
         decision_config: Optional[dict] = None,
         input_gates: Optional[list] = None,
         output_gates: Optional[list] = None,
+        # Workspace 配置
+        role: str = "",
+        skills: Optional[list[str]] = None,
+        mcp_servers: Optional[list[str]] = None,
+        role_template: str = "",
+        init_workspace: bool = True,
         **kwargs,
     ):
         """创建一个 Worker (Agent 实例).
@@ -146,6 +152,11 @@ class WorkerFactory:
             cli_config: 传给 CLI 构造器的额外配置 (如 model, timeout_seconds)
             decision_config: DecisionMaker 配置 dict
             input_gates / output_gates: Gate 列表
+            role: Worker 角色名称 (用于 workspace 目录命名和 roles.md)
+            skills: 技能名称列表 (生成 skills/*.md 软链接)
+            mcp_servers: MCP 服务名称列表 (生成 mcp/*.json 配置 stub)
+            role_template: 角色模板字符串 (如果 system_prompt 为空, 用 role_template.format(role=role))
+            init_workspace: True=自动初始化 workspace 目录结构 (默认 True)
             **kwargs: 其他传给 Agent.__init__ 的参数
 
         Returns:
@@ -164,6 +175,18 @@ class WorkerFactory:
 
         data_dir = Path(data_dir)
         workspace_dir = Path(workspace_dir) if workspace_dir else data_dir / "workspaces" / agent_id
+
+        # Workspace 初始化 (隔离配置)
+        if init_workspace:
+            _init_workspace(
+                workspace_dir=workspace_dir,
+                cli_name=cli_type,
+                role=role or agent_id,
+                system_prompt=system_prompt,
+                skills=skills,
+                mcp_servers=mcp_servers,
+                role_template=role_template,
+            )
 
         # 构造 CLI 实例
         cli_extra = cli_config or {}
@@ -250,3 +273,257 @@ __all__ = [
     "list_clis",
     "get_cli_class",
 ]
+
+
+# =============================================================================
+# WorkspaceManager
+# =============================================================================
+
+
+class WorkspaceManager:
+    """Worker 工作空间管理器.
+
+    每个 Worker 有一个独立 workspace, 包含:
+      - opencode.md / qwen.md / claude.md (CLI 引导文件)
+      - roles.md (Worker 角色定义)
+      - skills/ (技能文件, 可软链)
+      - mcp/ (MCP 服务配置)
+      - instructions/ (额外指令)
+      - config.yaml (Worker 配置, 可被 WorkerFactory 读取)
+
+    用法:
+        wm = WorkspaceManager(Path("./data_v2/workspaces/seller-fish"))
+        wm.init(
+            role="卖鱼小贩",
+            system_prompt="你是 seller-fish, 跟 buyer-fish 讨价还价...",
+            skills=["fish-pricing", "bargaining"],
+            mcp_servers=["fish-market-api"],
+            cli_name="opencode",
+        )
+    """
+
+    def __init__(self, workspace_dir: Path | str):
+        self.workspace_dir = Path(workspace_dir)
+
+    # --------------------------------------------------------------------------
+    # 目录结构
+    # --------------------------------------------------------------------------
+
+    def _mkdirs(self):
+        """创建标准 workspace 子目录."""
+        subdirs = ["skills", "mcp", "instructions"]
+        for sub in subdirs:
+            (self.workspace_dir / sub).mkdir(parents=True, exist_ok=True)
+
+    # --------------------------------------------------------------------------
+    # 初始化 (完整初始化一个 worker workspace)
+    # --------------------------------------------------------------------------
+
+    def init(
+        self,
+        role: str = "",
+        system_prompt: str = "",
+        skills: list[str] | None = None,
+        mcp_servers: list[str] | None = None,
+        cli_name: str = "opencode",
+        role_template: str = "",
+        extra_instructions: str = "",
+    ) -> Path:
+        """初始化 worker workspace.
+
+        Args:
+            role: 角色名称 (用于生成 roles.md 标题)
+            system_prompt: Worker 系统提示 (完整文本, 直接写入 roles.md)
+            skills: 技能名称列表 (生成 skills/*.md 软链接, 指向全局技能目录)
+            mcp_servers: MCP 服务名称列表 (生成 mcp/*.json 配置)
+            cli_name: CLI 类型 ("opencode" / "qwen" / "claude" / "mock")
+            role_template: 角色模板 (如果 system_prompt 为空, 用这个模板 + role 生成)
+            extra_instructions: 额外指令文本 (写入 instructions/default.md)
+
+        Returns:
+            workspace_dir 路径
+        """
+        self._mkdirs()
+
+        # 1. roles.md (Worker 角色定义)
+        self._write_roles(role, system_prompt, role_template)
+
+        # 2. CLI 引导文件 (opencode.md / qwen.md / claude.md)
+        self._write_cli引导(cli_name, role, system_prompt)
+
+        # 3. skills/ (软链接到全局技能目录)
+        if skills:
+            self._link_skills(skills)
+
+        # 4. mcp/ (MCP 服务配置)
+        if mcp_servers:
+            self._setup_mcp(mcp_servers)
+
+        # 5. instructions/
+        if extra_instructions:
+            (self.workspace_dir / "instructions" / "default.md").write_text(
+                extra_instructions, encoding="utf-8"
+            )
+
+        # 6. config.yaml (Worker 配置快照)
+        self._write_config(cli_name, role, skills or [], mcp_servers or [])
+
+        return self.workspace_dir
+
+    def _write_roles(self, role: str, system_prompt: str, role_template: str):
+        if system_prompt:
+            content = system_prompt
+        elif role_template and role:
+            content = role_template.format(role=role)
+        elif role:
+            content = f"# {role}\n\n你是 {role}."
+        else:
+            content = ""
+        if content:
+            (self.workspace_dir / "roles.md").write_text(content, encoding="utf-8")
+
+    def _write_cli引导(self, cli_name: str, role: str, system_prompt: str):
+        """写 CLI 引导文件 (opencode.md / qwen.md 等)."""
+        filename = f"{cli_name}.md"
+        # 如果 roles.md 已经有完整内容, opencode.md 可以引用它
+        content = f"""# {cli_name}.md — {role or "Worker"} 引导
+
+<!-- 自动生成, 编辑 roles.md 或 opencode.md 修改角色 -->
+
+"""
+        if system_prompt:
+            content += f"""## 角色
+
+{system_prompt}
+
+"""
+        content += """## 工作流
+
+1. 读取 roles.md 了解你的角色
+2. 读取 instructions/default.md (如果有)
+3. 执行任务, 回复格式:
+   - 简短回复内容
+   - STATUS 块:
+<!--STATUS
+ session_id: {session_id}
+ task_id: {task_id}
+ progress: <0-100>
+ summary: <你说的>
+ next_action: <下一步>
+ confidence: high
+-->
+"""
+        (self.workspace_dir / filename).write_text(content, encoding="utf-8")
+
+    def _link_skills(self, skills: list[str]):
+        """软链接 skills/*.md 到全局 skills 目录.
+
+        全局 skills 目录: WORKSPACE_TEMPLATES_DIR/skills/
+        """
+        skills_global = Path(__file__).parent.parent.parent.parent / "workspace_templates" / "skills"
+        if skills_global.exists():
+            for skill in skills:
+                src = skills_global / f"{skill}.md"
+                dst = self.workspace_dir / "skills" / f"{skill}.md"
+                if src.exists() and not dst.exists():
+                    try:
+                        dst.symlink_to(src)
+                    except OSError:
+                        # Windows 不支持 symlink, 复制
+                        import shutil
+                        shutil.copy(src, dst)
+
+    def _setup_mcp(self, mcp_servers: list[str]):
+        """为 mcp_servers 生成配置 stub (待用户填充)."""
+        for server in mcp_servers:
+            cfg = self.workspace_dir / "mcp" / f"{server}.json"
+            if not cfg.exists():
+                cfg.write_text(
+                    f'{{"mcp_server": "{server}", "config": {{"address": "", "api_key": ""}}}}',
+                    encoding="utf-8",
+                )
+
+    def _write_config(self, cli_name: str, role: str, skills: list, mcp_servers: list):
+        import json
+        cfg = {
+            "agent_id": self.workspace_dir.name,
+            "role": role,
+            "cli": cli_name,
+            "skills": skills,
+            "mcp_servers": mcp_servers,
+            "workspace": str(self.workspace_dir),
+        }
+        cfg_path = self.workspace_dir / "config.json"
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+
+    # --------------------------------------------------------------------------
+    # 工具方法
+    # --------------------------------------------------------------------------
+
+    def read_roles(self) -> str:
+        roles_path = self.workspace_dir / "roles.md"
+        if roles_path.exists():
+            return roles_path.read_text(encoding="utf-8")
+        return ""
+
+    def list_skills(self) -> list[str]:
+        skills_dir = self.workspace_dir / "skills"
+        if not skills_dir.exists():
+            return []
+        return [p.stem for p in skills_dir.glob("*.md")]
+
+    def list_mcp(self) -> list[str]:
+        mcp_dir = self.workspace_dir / "mcp"
+        if not mcp_dir.exists():
+            return []
+        return [p.stem for p in mcp_dir.glob("*.json")]
+
+    def add_instruction(self, filename: str, content: str):
+        """写一个指令文件到 instructions/."""
+        path = self.workspace_dir / "instructions" / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    def get_cli引导(self, cli_name: str) -> str:
+        """读指定 CLI 的引导文件."""
+        path = self.workspace_dir / f"{cli_name}.md"
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+        return ""
+
+
+# =============================================================================
+# WorkerFactory 集成 WorkspaceManager
+# =============================================================================
+
+def _init_workspace(
+    workspace_dir: Path,
+    cli_name: str,
+    role: str,
+    system_prompt: str,
+    skills: list[str] | None,
+    mcp_servers: list[str] | None,
+    role_template: str,
+) -> Path:
+    """初始化 worker workspace (内部 helper)."""
+    wm = WorkspaceManager(workspace_dir)
+    # 如果 workspace 已有 roles.md, 不覆盖 (保留用户编辑)
+    roles_path = workspace_dir / "roles.md"
+    prompt_to_use = system_prompt
+    if roles_path.exists() and system_prompt:
+        # roles.md 已存在, 合并: 追加 system_prompt
+        existing = roles_path.read_text(encoding="utf-8")
+        if system_prompt not in existing:
+            prompt_to_use = existing + "\n\n" + system_prompt
+        else:
+            prompt_to_use = existing
+    wm.init(
+        role=role,
+        system_prompt=prompt_to_use,
+        skills=skills,
+        mcp_servers=mcp_servers,
+        cli_name=cli_name,
+        role_template=role_template,
+    )
+    return workspace_dir
