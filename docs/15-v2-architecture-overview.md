@@ -1,6 +1,6 @@
 # 15. v2.0 Architecture Overview
 
-> Status: ✅ Production-ready (232/232 tests 全过, 17 commits)
+> Status: ✅ Production-ready (370/370 tests 全过, 20 commits)
 > Date: 2026-06-08
 > Author: 方浩博 + QClaw agent
 
@@ -21,7 +21,11 @@
 | **SessionSnapshot** | Session 的轻量摘要 (Comms/Scanner 调 API 判断时用) | v2.0 新引入, 避免传整个 Session |
 | **Scanner** | 后台进程, 扫频道 JSONL, 投递 mention mail (纯程序, 0 token) | 跟 v1 "Scanner" 类似, 但重写为 PDR 风格 |
 | **Scheduler** | 全局后台进程, 检查 stale task, 发 request_status 邮件, 锁释放 | `scheduler.py`, v2.0 新引入 (v1 没) |
-| **EventHandler** | Agent 内部决策 pipeline, 听 comms 事件按 7 步处理 (gate / decide / session / build_prompt / cli / gate / write) | `event_handler.py`, 改名前叫 AgentScheduler |
+| **EventHandler** | Agent 内部决策 pipeline, 两种模式: passive (等 mail) / proactive (轮询订阅频道) | `event_handler.py` |
+| **DecisionMaker** | LLM 决定 session 续/新建/skip (passive) + 要不要发言 (proactive) | `decision.py`, v2.0 新引入 |
+| **Subscription** | Agent 主动订阅的频道列表. proactive 模式下轮询这些频道,DecisionMaker 决定要不要发言 | v2.0 新引入 |
+| **Passive 模式** | 等 mail 事件 (Scanner 投递 @mention) → DecisionMaker 决定 session | 被动响应, 适合人机混合 |
+| **Proactive 模式** | 订阅频道 + 轮询 → DecisionMaker 决定要不要发言 → CLI 生成 → 写频道 | 主动发起, 适合全自主 agent 社交 |
 | **Agent (容器)** | 1 worker = 4 组件 (Comms + EventHandler + SessionMgr + CLI) 的 Python class | 跟 v1 `Author` 类似, 但瘦身为容器 |
 | **PDR 4 组件** | Perceive (Comms) + Decide (EventHandler) + Remember (SessionMgr) + Act (CLI) | v2.0 4 组件架构核心 |
 | **CLI 客户端** | 调外部 LLM 工具 (opencode / qwen / claude) 的适配层 | 跟 "tool adapter" 同义 |
@@ -33,6 +37,8 @@
 | **scanner_state** | Scanner 各频道的 offset 持久化 | 防止重启后重复扫 |
 | **scheduler_state** | Scheduler request_log 持久化 | 防止重启后丢超时任务 |
 | **decide_session** | SessionManager 决定续/新建 session 的核心 API | v2.0 新引入 (v1 简单续) |
+| **decide_speak** | DecisionMaker 决定要不要发言 (proactive 模式): speak/skip/initiate | v2.0 新引入 |
+| **Channel path** | Scanner 投递时填的路径标签: `email` (必答) / `poll` (可 skip) / `broadcast` (可 skip) | v2.0 新引入, 影响 DecisionMaker 行为 |
 | **e2e (端到端)** | 跑 2 真实 agent + 真 LLM 的集成测试 | 跟 e2e tests 同义 |
 
 ---
@@ -353,17 +359,104 @@ v2 优先单行 (LLM 容易生成), fallback 多行 (向后兼容).
 └──────────────────────────────────────────────────────────────────┘
 ```
 
+### B.9 Proactive 模式 — 订阅频道 + 自主发言 (v2.0 新增)
+
+**核心区别**:
+- Passive: Scanner 投递 mail → EventHandler 等事件
+- Proactive: Agent 自己订阅频道 + 轮询 → DecisionMaker 决定要不要说
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  Proactive 模式 (全自主 agent 社交)                               │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                   │
+│  god (admin) 发第一条消息到 fish-market                          │
+│     ↓ append to fish-market.jsonl                                │
+│                                                                   │
+│  ┌─ Agent.seller (proactive, subscriptions=[fish-market]) ────┐ │
+│  │  while not stop:                                            │ │
+│  │    for channel in subscriptions:                            │ │
+│  │      messages = channel.read_since(offset)   # 增量读       │ │
+│  │      if messages:                                           │ │
+│  │        decision = DM.decide_speak(messages, role, session)   │ │
+│  │        if decision.action == "speak":                       │ │
+│  │          reply = cli.execute(prompt, session)                │ │
+│  │          channel.append(reply)                               │ │
+│  │        elif decision.action == "skip":                      │ │
+│  │          pass  # 不发言, 等下一轮                            │ │
+│  │    sleep(poll_interval)                                      │ │
+│  └────────────────────────────────────────────────────────────┘ │
+│                                                                   │
+│  ┌─ Agent.buyer (proactive, subscriptions=[fish-market]) ─────┐ │
+│  │  (同上, 两个 agent 同时轮询, 互相看到对方的新消息)              │ │
+│  └────────────────────────────────────────────────────────────┘ │
+│                                                                   │
+│  对话流 (e2e_autonomous.sh 验证通过):                            │
+│    god:  "今天的鱼价行情怎么样? 开始报价吧"                      │
+│    seller: "100块一斤, 这品质绝对值"                              │
+│    buyer:  "70 块钱能拿几条?"                                     │
+│    seller: "95块, 搭两条小黄鱼"                                    │
+│    buyer:  "80~85 一步到位"                                       │
+│    seller: "88块, 搭两条小黄鱼" ← 成交!                           │
+│    buyer:  "成交! 88现金"                                          │
+│    seller: "成交! 给你挑最新鲜的"                                  │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**Agent 构造 (proactive 模式)**:
+```python
+agent = Agent(
+    agent_id="seller-fish",
+    cli=OpenCodeCLI(),
+    data_dir="./data",
+    mode="proactive",                    # ← 关键: proactive 模式
+    subscriptions=["fish-market"],       # ← 订阅频道列表
+    system_prompt="你是卖鱼小贩...",
+)
+# 运行时动态订阅/取消订阅
+agent.add_subscription("new-channel")
+agent.remove_subscription("old-channel")
+```
+
+**DecisionMaker.decide_speak prompt**:
+```
+[Worker 角色]
+你是 seller-fish (卖鱼小贩). 跟 buyer-fish 讨价还价.
+
+[频道最近消息]
+  [10:00] god: 今天的鱼价行情怎么样? 开始报价吧
+  [10:01] seller-fish: 100块一斤
+  [10:02] buyer-fish: 70 块钱能拿几条?
+
+[当前 session]
+  session_id: s1, topic: 买鱼, progress: 10%
+  next_action: 等 buyer 还价
+
+[决定]
+有跟你相关的新消息吗? 你应该发言吗?
+  - speak: 有新消息要回复
+  - skip: 跟你无关/已成交
+  - initiate: 频道空, 主动发起
+
+[输出格式 - 严格 JSON]
+{"action": "speak", "reason": "..."}
+或 {"action": "skip", "reason": "..."}
+或 {"action": "initiate", "reason": "...", "topic": "...", "content": "..."}
+```
+
 ---
 
 ## 0. 文档地图
 
 | 文档 | 内容 | 何时读 |
 |------|------|--------|
-| **本文档 (15)** | **总览** - 4 组件 PDR + 文件总线 + 跨平台 + opencode.md 5 条铁律 + 单行 STATUS + 路线图 | 第一次了解 v2 |
+| **本文档 (15)** | **总览** - 4 组件 PDR + 文件总线 + 跨平台 + opencode.md 5 条铁律 + 单行 STATUS + Proactive 模式 | 第一次了解 v2 |
 | [`docs/13-pdr-architecture.md`](13-pdr-architecture.md) | 4 组件 PDR 详细 (Step 1-6 实施记录) | 改 4 组件时 |
 | [`docs/14-windows-compat.md`](14-windows-compat.md) | 跨平台设计 (shutil.which / pathlib / 17 tests) | Windows 部署时 |
 | [`docs/11-v2-architecture.md`](11-v2-architecture.md) | v2.0 初版架构 (3-channel + 路由) | 了解 v2.0 原始设计 |
 | [`docs/12-workspace-pattern.md`](12-workspace-pattern.md) | workspace_dir + <cli_name>.md 引导 | 了解 workspace 机制 |
+| [`docs/18-decision-maker.md`](18-decision-maker.md) | DecisionMaker (LLM 选 session) + 邮箱/轮询路径 + 强约束 | DecisionMaker 集成时 |
+| [`docs/19-channel-subscription.md`](19-channel-subscription.md) | Channel Subscription 订阅设计 + ProactiveEventHandler 架构 | Proactive 模式时 |
 
 ---
 
@@ -386,6 +479,7 @@ v2 优先单行 (LLM 容易生成), fallback 多行 (向后兼容).
 | 任务认领 | Posts claim (SQL UPDATE) | **O_EXCL 文件锁 + mtime TTL** |
 | 状态 | Monitor events JSONL | **STATUS 注释块 + state_board.json** |
 | 调度 | 嵌入 Agent 内部 | **Scheduler 后台进程 (全局, stale task + 锁)** (超时 + 锁释放) |
+| **运行模式** | 只有被动 (等 @mention) | **Passive (等 mail) + Proactive (订阅频道自主发言)** (v2.0 新增) |
 | 调试 | sqlite3 CLI | **cat / jq** (文件总线) |
 
 ## 3. 4 组件 PDR 架构 (每个 agent = 1 worker)
@@ -402,8 +496,11 @@ v2 优先单行 (LLM 容易生成), fallback 多行 (向后兼容).
 │     - 输出: (event_type, event_data) 流         │
 │                                                │
 │  ② EventHandler  "决策"                       │
-│     - 听 comms 事件                             │
-│     - 续/新建 session                            │
+│     - 两种模式 (Agent.mode 决定):               │
+│       - **passive**: 听 comms 事件 (等 mail)    │
+│         → decide_session() → 续/新建/skip     │
+│       - **proactive**: 轮询订阅频道              │
+│         → decide_speak() → speak/skip/initiate │
 │     - 构造 prompt (含真历史)                     │
 │     - 调 cli.execute                             │
 │     - 解析 STATUS 块                             │
@@ -422,6 +519,12 @@ v2 优先单行 (LLM 容易生成), fallback 多行 (向后兼容).
 │                                                │
 └────────────────────────────────────────────────┘
 ```
+
+**两种运行模式**:
+- **Passive** (默认): Scanner 投递 mail → EventHandler 等事件 → DecisionMaker 决定 session
+- **Proactive** (v2.0 新增): 订阅频道 + 轮询 → DecisionMaker.decide_speak → CLI 生成 → 写频道
+
+见 **B.1** (passive) 和 **B.9** (proactive) ASCII 框图.
 
 详细见 `docs/13-pdr-architecture.md`.
 
