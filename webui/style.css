@@ -858,3 +858,169 @@ pre, code {
 .loading { padding: 20px; text-align: center; color: var(--text-secondary); }
 .empty-state { padding: 24px; text-align: center; color: var(--text-tertiary); }
 .error { padding: 16px; background: color-mix(in srgb, var(--danger) 15%, transparent); border: 1px solid var(--danger); border-radius: 6px; color: var(--danger); margin: 8px 0; }
+
+/* Channel list simple (dashboard) */
+.channel-list-simple { display: flex; flex-direction: column; gap: 4px; }
+.channel-item-simple {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 14px; background: var(--bg-secondary); border-radius: 6px;
+  cursor: pointer; font-size: 14px;
+}
+.channel-item-simple:hover { background: var(--bg-hover); }
+.channel-item-simple .channel-name { color: var(--accent); font-weight: 600; }
+.channel-item-simple .channel-msgs { color: var(--text-secondary); font-size: 12px; }
+
+/* Active nav highlight */
+.nav-item.active { background: var(--bg-tertiary); font-weight: 700; }
+
+/* === Chat Window === */
+.channel-chat-window {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 300px;
+  max-height: 450px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-secondary);
+}
+
+.chat-msg {
+  display: flex;
+  flex-direction: column;
+  max-width: 75%;
+}
+.chat-msg.msg-self {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+.chat-msg.msg-system {
+  align-self: center;
+  max-width: 90%;
+}
+
+.chat-bubble {
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+}
+.chat-msg.msg-self .chat-bubble {
+  background: color-mix(in srgb, var(--accent) 15%, var(--bg-tertiary));
+  border-color: var(--accent);
+}
+.chat-msg.msg-system .chat-bubble {
+  background: var(--bg);
+  border-style: dashed;
+}
+
+.chat-sender {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 2px;
+}
+.chat-content {
+  font-size: 14px;
+  line-height: 1.5;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+.chat-mentions {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+.chat-meta {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+  text-align: right;
+}
+
+/* Send area */
+.channel-send {
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  padding: 12px;
+}
+.send-row { margin-bottom: 8px; }
+.send-row input, .send-row select, .send-row textarea {
+  width: 100%; padding: 8px; border: 1px solid var(--border);
+  border-radius: 6px; background: var(--bg); color: var(--text); font-size: 13px;
+}
+.send-row input:focus, .send-row textarea:focus, .send-row select:focus {
+  outline: none; border-color: var(--accent);
+}
+.send-actions { display: flex; gap: 8px; }
+
+/* === Workspace in Worker Card === */
+.worker-workspace {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.workspace-header {
+  padding: 6px 10px;
+  background: var(--bg-tertiary);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.workspace-files {
+  padding: 8px;
+  max-height: 150px;
+  overflow-y: auto;
+  background: var(--bg);
+}
+.ws-file {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 6px;
+  font-size: 12px;
+  border-radius: 3px;
+}
+.ws-file:hover { background: var(--bg-hover); }
+.ws-path { color: var(--text); font-family: monospace; }
+.ws-size { color: var(--text-tertiary); font-size: 11px; }
+.ws-empty { padding: 6px; font-size: 12px; color: var(--text-tertiary); font-style: italic; }
+.ws-loading { padding: 6px; font-size: 12px; color: var(--text-tertiary); }
+
+/* Channel detail layout improvements */
+.channel-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 16px;
+}
+.channel-detail .channel-meta-info {
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.channel-detail .meta-row {
+  display: flex;
+  gap: 8px;
+  font-size: 13px;
+  padding: 2px 0;
+}
+.channel-detail .meta-label {
+  color: var(--text-secondary);
+  font-weight: 600;
+  min-width: 70px;
+}
+.channel-members { margin-bottom: 12px; }
+.channel-members h4 { font-size: 13px; margin-bottom: 6px; color: var(--text-secondary); }

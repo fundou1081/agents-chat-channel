@@ -229,6 +229,7 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
                 "agent_id": agent_id,
                 "pending": len(pending),
                 "log_path": str(data_dir / "logs" / f"{agent_id}.log"),
+                "workspace_dir": str(data_dir / "workspaces" / agent_id),
             })
         return agents
 
@@ -277,6 +278,20 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
             return {"log": "", "lines": 0}
         lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
         return {"log": "\n".join(lines[-tail:]), "lines": len(lines)}
+
+    @app.get("/api/agents/{agent_id}/workspace")
+    def get_agent_workspace(agent_id: str):
+        """列出 agent 的 workspace 内容."""
+        ws_dir = data_dir / "workspaces" / agent_id
+        if not ws_dir.exists():
+            return {"agent_id": agent_id, "workspace_dir": str(ws_dir), "files": [], "exists": False}
+        files = []
+        for f in ws_dir.rglob("*"):
+            if f.is_file():
+                rel = f.relative_to(ws_dir)
+                size = f.stat().st_size
+                files.append({"path": str(rel), "size": size})
+        return {"agent_id": agent_id, "workspace_dir": str(ws_dir), "files": files, "exists": True}
 
     # -------------------------------------------------------------------------
     # Mailboxes

@@ -197,19 +197,14 @@ async function refreshDashboard() {
       </div>
 
       <div class="section">
-        <h3>最近消息 (所有频道)</h3>
-        <div class="recent-messages">
-          ${chs.slice(0, 5).map(ch => {
-            const msgs = ch.messages || [];
-            const last = msgs[msgs.length - 1];
-            if (!last) return '';
-            return `<div class="msg-item" onclick="selectChannel('${ch.name}')">
-              <span class="msg-channel">${ch.name}</span>
-              <span class="msg-from">${escapeHtml(last.from || '')}</span>
-              <span class="msg-content">${escapeHtml((last.content || '').slice(0, 60))}</span>
-              <span class="msg-time">${fmtRelTime(last.ts)}</span>
-            </div>`;
-          }).join('')}
+        <h3>频道列表</h3>
+        <div class="channel-list-simple">
+          ${chs.map(ch => `
+            <div class="channel-item-simple" onclick="selectChannel('${ch.name}')">
+              <span class="channel-name">${escapeHtml(ch.name)}</span>
+              <span class="channel-msgs">${ch.messages || 0} 条消息</span>
+            </div>
+          `).join('')}
           ${chs.length === 0 ? '<div class="empty-state">暂无频道</div>' : ''}
         </div>
       </div>
@@ -245,11 +240,9 @@ async function refreshChannels() {
            onclick="selectChannel('${ch.name}')">
         <div class="channel-name">${escapeHtml(ch.name)}</div>
         <div class="channel-meta">
-          ${ch.member_count != null ? `<span>${ch.member_count} 成员</span>` : ''}
-          ${ch.max_messages ? `<span>限${ch.max_messages}条</span>` : ''}
-          ${ch.enabled_workers?.length ? `<span>白名单</span>` : ''}
+          ${ch.members?.length ? `<span>${ch.members.length} 成员</span>` : ''}
+          ${ch.max_messages > 0 ? `<span>限${ch.max_messages}条</span>` : ''}
         </div>
-        <div class="channel-last">${fmtRelTime(ch.last_msg_ts)}</div>
       </div>
     `).join('');
 
@@ -273,7 +266,21 @@ async function selectChannel(name) {
 }
 
 async function loadChannelDetail(name) {
+  // also expose refresh function
+  window.refreshChannelDetail = async (n) => { await loadChannelDetail(n || name); };
   const detailEl = $('channel-detail');
+  // Enter key in textarea → send (Shift+Enter =换行)
+  setTimeout(() => {
+    const ta = $('channel-msg-content');
+    if (ta) {
+      ta.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendChannelMsg(name);
+        }
+      });
+    }
+  }, 100);
   if (!detailEl) return;
 
   try {
@@ -329,27 +336,28 @@ async function loadChannelDetail(name) {
         </div>
       </div>
 
-      <div class="channel-messages">
-        <h4>最近消息 <span class="msg-count">${msgs.length}</span></h4>
-        <div class="messages-list">
-          ${msgs.map(m => `
-            <div class="msg-row ${m.from === 'god' ? 'msg-god' : ''}">
-              <span class="msg-ts">${fmtTime(m.ts)}</span>
-              <span class="msg-from">${escapeHtml(m.from || '')}</span>
-              ${(m.mentions || []).length ? `<span class="msg-mentions">@${m.mentions.join(',@')}</span>` : ''}
-              <span class="msg-type">${m.type || ''}</span>
-              <span class="msg-content">${escapeHtml((m.content || '').slice(0, 120))}</span>
-            </div>
-          `).join('')}
-          ${msgs.length === 0 ? '<div class="empty-state">暂无消息</div>' : ''}
+      <div class="channel-chat-window" id="channel-chat-${name}">
+        <div class="chat-messages" id="chat-messages-${name}">
+          ${msgs.map(m => {
+            const isSelf = m.from === 'god';
+            const isSystem = m.type === 'system' || m.type === 'status_report';
+            return `<div class="chat-msg ${isSelf ? 'msg-self' : ''} ${isSystem ? 'msg-system' : ''}">
+              <div class="chat-bubble">
+                ${!isSelf ? `<div class="chat-sender">${escapeHtml(m.from || '')}</div>` : ''}
+                <div class="chat-content">${escapeHtml(m.content || '')}</div>
+                ${(m.mentions || []).length ? `<div class="chat-mentions">@${m.mentions.join(', @')}</div>` : ''}
+                <div class="chat-meta">${fmtTime(m.ts)} · ${m.type || ''}</div>
+              </div>
+            </div>`;
+          }).join('')}
+          ${msgs.length === 0 ? '<div class="empty-state">暂无消息, 发送一条开始聊天</div>' : ''}
         </div>
       </div>
 
       <div class="channel-send">
-        <h4>发消息</h4>
         <div class="send-row">
-          <input type="text" id="channel-msg-from" value="god" placeholder="from">
-          <input type="text" id="channel-msg-mentions" placeholder="@mention (逗号分隔)">
+          <input type="text" id="channel-msg-from" value="god" placeholder="发送者">
+          <input type="text" id="channel-msg-mentions" placeholder="@提及 (逗号分隔)">
         </div>
         <div class="send-row">
           <select id="channel-msg-type">
@@ -359,9 +367,12 @@ async function loadChannelDetail(name) {
           </select>
         </div>
         <div class="send-row">
-          <textarea id="channel-msg-content" rows="3" placeholder="消息内容..."></textarea>
+          <textarea id="channel-msg-content" rows="2" placeholder="输入消息... (Enter 发送, Shift+Enter 换行)"></textarea>
         </div>
-        <button class="btn btn-primary" onclick="sendChannelMsg('${name}')">发送</button>
+        <div class="send-actions">
+          <button class="btn btn-primary" onclick="sendChannelMsg('${name}')">发送</button>
+          <button class="btn" onclick="refreshChannelDetail('${name}')">↻ 刷新</button>
+        </div>
       </div>
     `;
   } catch (e) {
@@ -460,6 +471,13 @@ async function refreshWorkers() {
             </div>
             <div class="worker-info">
               ${agent.log_path ? `<div class="info-row"><span>log:</span><span class="path">${agent.log_path}</span></div>` : ''}
+              ${agent.workspace_dir ? `<div class="info-row"><span>workspace:</span><span class="path">${agent.workspace_dir}</span></div>` : ''}
+            </div>
+            <div class="worker-workspace">
+              <div class="workspace-header">📁 workspace</div>
+              <div class="workspace-files" id="ws-files-${agent.agent_id}">
+                <div class="ws-loading">加载中...</div>
+              </div>
             </div>
             <div class="worker-actions">
               <button class="btn btn-sm" onclick="startWorker('${agent.agent_id}')">▶ 启动</button>
@@ -473,6 +491,31 @@ async function refreshWorkers() {
     `;
   } catch (e) {
     el.innerHTML = `<div class="error">${escapeHtml(e.message)}</div>`;
+  } finally {
+    // load workspace for each worker
+    try {
+      const ags = await api('/api/agents');
+      for (const agent of ags) {
+        loadWorkspaceFiles(agent.agent_id);
+      }
+    } catch {}
+  }
+}
+
+async function loadWorkspaceFiles(agentId) {
+  const el = $(`ws-files-${agentId}`);
+  if (!el) return;
+  try {
+    const ws = await api(`/api/agents/${agentId}/workspace`);
+    if (!ws.exists) {
+      el.innerHTML = '<div class="ws-empty">无 workspace</div>';
+      return;
+    }
+    el.innerHTML = ws.files.length
+      ? ws.files.map(f => `<div class="ws-file"><span class="ws-path">${escapeHtml(f.path)}</span><span class="ws-size">${f.size}B</span></div>`).join('')
+      : '<div class="ws-empty">workspace 为空</div>';
+  } catch (e) {
+    el.innerHTML = '<div class="ws-empty">加载失败</div>';
   }
 }
 
