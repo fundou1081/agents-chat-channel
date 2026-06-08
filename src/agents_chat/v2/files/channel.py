@@ -295,11 +295,19 @@ class Channel:
         """最后 n 条消息 (返回顺序: 旧 → 新)."""
         if not self.path.exists() or self.path.stat().st_size == 0:
             return []
-        # 简单实现: 全读后 slice. v2.0 频道文件不会太大.
         with open(self.path, "r", encoding="utf-8") as f:
             lines = f.readlines()
         msgs = [json.loads(l) for l in lines[-n:] if l.strip()]
         return msgs
+
+    def read(self, limit: int = 100, before: int = 0) -> list[dict]:
+        """读最多 limit 条消息. 返回 旧→新."""
+        if not self.path.exists() or self.path.stat().st_size == 0:
+            return []
+        with open(self.path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        msgs = [json.loads(l) for l in lines if l.strip()]
+        return msgs[-limit:]
 
     def read_since(self, offset: int = 0) -> tuple[list[dict], int]:
         """从第 offset 行开始读, 返回 (messages, new_offset).
@@ -348,3 +356,33 @@ class Channel:
 
     def __len__(self) -> int:
         return self._count_lines()
+
+
+# =============================================================================
+# 工具函数
+# =============================================================================
+
+
+def fuzzy_resolve_mention(target: str, candidates: list[str]) -> str | None:
+    """模糊匹配 target 到 candidates 里的 agent_id.
+
+
+    规则 (优先级从高到低):
+      1. 完全匹配
+      2. target 是 candidate 的 prefix (target="sell", candidate="seller-fish")
+      3. target 是 candidate 的子串 (target="fish", candidate="seller-fish")
+      4. 多个匹配时: 选**最长**的 candidate (更精确)
+
+    返回匹配到的 agent_id, 无匹配返回 None.
+    """
+    if not target or not candidates:
+        return None
+    if target in candidates:
+        return target  # 精确匹配
+    matches = []
+    for c in candidates:
+        if c.startswith(target) or target in c:
+            matches.append(c)
+    if not matches:
+        return None
+    return max(matches, key=len)

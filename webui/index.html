@@ -50,9 +50,6 @@
         <li class="nav-item" data-view="state-board">
           <span class="icon">📋</span> 任务板
         </li>
-        <li class="nav-item" data-view="processes">
-          <span class="icon">⚙️</span> 进程
-        </li>
         <li class="nav-item" data-view="stats">
           <span class="icon">📈</span> 统计
         </li>
@@ -81,25 +78,7 @@
             <div class="card-label">频道</div>
             <div class="card-value" id="stat-channels">-</div>
           </div>
-          <div class="card">
-            <div class="card-label">进程</div>
-            <div class="card-value" id="stat-processes">-</div>
-            <div class="card-sub" id="stat-processes-sub"></div>
-          </div>
-          <div class="card">
-            <div class="card-label">Scanner</div>
-            <div class="card-value" id="stat-scanner">-</div>
-            <button class="btn btn-sm" id="scanner-toggle" onclick="toggleScanner()">启动</button>
-          </div>
-          <div class="card">
-            <div class="card-label">Scheduler</div>
-            <div class="card-value" id="stat-scheduler">-</div>
-            <button class="btn btn-sm" id="scheduler-toggle" onclick="toggleScheduler()">启动</button>
-          </div>
         </div>
-
-        <h3>运行中的进程</h3>
-        <div id="dashboard-processes"></div>
 
         <h3>最近活动</h3>
         <div id="dashboard-activity" class="activity-feed"></div>
@@ -158,14 +137,6 @@
           <h2>📋 任务板</h2>
         </div>
         <div id="state-board-list"></div>
-      </section>
-
-      <!-- 进程 -->
-      <section id="view-processes" class="view">
-        <div class="view-header">
-          <h2>⚙️ 进程</h2>
-        </div>
-        <div id="processes-list"></div>
       </section>
 
       <!-- 统计 -->

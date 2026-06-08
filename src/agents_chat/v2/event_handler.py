@@ -169,7 +169,7 @@ class EventHandler:
 
     async def run(self):
         """听 comms 事件, 处理 (被动模式)."""
-        logger.info(f"[{self.agent_id}] scheduler ▶ run (passive)")
+        logger.info(f"[{self.agent_id}] event_handler ▶ run (passive)")
         try:
             async for event_type, event_data in self.comms.listen():
                 try:
@@ -185,7 +185,7 @@ class EventHandler:
         except asyncio.CancelledError:
             pass
         finally:
-            logger.info(f"[{self.agent_id}] scheduler ⏹ stopped")
+            logger.info(f"[{self.agent_id}] event_handler ⏹ stopped (passive)")
         try:
             async for event_type, event_data in self.comms.listen():
                 try:
@@ -202,7 +202,7 @@ class EventHandler:
         except asyncio.CancelledError:
             pass
         finally:
-            logger.info(f"[{self.agent_id}] scheduler ⏹ stopped")
+            logger.info(f"[{self.agent_id}] event_handler ⏹ stopped (proactive)")
 
 
     # ------------------------------------------------------------------
@@ -680,7 +680,7 @@ class EventHandler:
             return
         session = sessions[0]
         # 调 LLM 重新生成 STATUS
-        prompt = f"[scheduler] task {task_id} 已 stale ({self.comms.stale_ttl}s 无 heartbeat), 请更新 STATUS 块"
+        prompt = f"[event_handler] task {task_id} 已 stale ({self.comms.stale_ttl}s 无 heartbeat), 请更新 STATUS 块"
         try:
             response = await self.cli.execute(
                 session_id=session.remote_id,

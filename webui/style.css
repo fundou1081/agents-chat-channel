@@ -372,6 +372,8 @@ body {
   align-items: center;
   justify-content: space-between;
   background: var(--bg-secondary);
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .channel-header h3 {
@@ -390,6 +392,12 @@ body {
   padding: 2px 8px;
   border-radius: 10px;
   color: var(--text-secondary);
+}
+
+.channel-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .messages {

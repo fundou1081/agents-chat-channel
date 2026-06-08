@@ -2,46 +2,36 @@
 FastAPI Server for v2.0 — HTTP API + WebUI 静态文件.
 
 端点 (REST):
-  GET  /                              health check
-  GET  /api/agents                    列出所有 agent (mailbox 文件)
-  GET  /api/agents/{id}               agent 详情 (snapshot)
-  POST /api/agents/{id}/start         启动 agent 进程
-  POST /api/agents/{id}/stop          停止 agent 进程
-  GET  /api/agents/{id}/process       agent 进程状态
-  GET  /api/agents/{id}/log           agent 日志 (tail)
-  POST /api/agents/{id}/tick          触发 agent 立即 tick (mailbox 唤醒)
+  GET  /api/health                  health check
+  GET  /api/channels                列出所有频道
+  GET  /api/channels/{name}/messages 频道消息
+  POST /api/channels/{name}/messages 发消息
+  DELETE /api/channels/{name}/messages 清空频道消息
+  GET  /api/channels/{name}/meta     频道成员/admins
+  POST /api/channels/{name}/members  加成员
+  POST /api/channels/{name}/admins   加 admin
 
-  GET  /api/channels                  列出所有频道
-  GET  /api/channels/{name}/messages  频道消息 (tail)
-  POST /api/channels/{name}/messages  发消息到频道 (mention/task_broadcast)
-  GET  /api/channels/{name}/meta      频道元数据 (members + admins)
-  POST /api/channels/{name}/members   加成员
-  POST /api/channels/{name}/admins    加 admin (worker or human)
+  GET  /api/agents                  列出所有 worker (mailbox 文件)
+  GET  /api/agents/{id}             worker 详情 (snapshot)
+  POST /api/agents/{id}/start       启动 worker
+  POST /api/agents/{id}/stop        停止 worker
+  GET  /api/agents/{id}/log         worker 日志 (tail)
 
-  GET  /api/mailboxes/{id}            agent 邮箱 pending 邮件
-  DELETE /api/mailboxes/{id}          清空邮箱
+  GET  /api/mailboxes/{id}          agent 邮箱
+  DELETE /api/mailboxes/{id}        清空邮箱
 
-  GET  /api/sessions/{id}             agent 全部 sessions
-  GET  /api/sessions/{id}/active      agent active sessions
-  POST /api/sessions/{id}/decide      decide_session LLM-free API
-                                       (测试 SessionManager.decide_session)
+  GET  /api/sessions/{id}           worker sessions
+  GET  /api/sessions/{id}/active    worker active sessions
 
-  GET  /api/state_board               全局状态板
-  GET  /api/state_board/{task_id}     某个 task 状态
-  GET  /api/scanner/status            scanner offset
-  GET  /api/stats                     简单统计
+  GET  /api/state_board             全局状态板
+  GET  /api/state_board/{task_id}   某个 task 状态
 
-  POST /api/scanner/start             启动 scanner
-  POST /api/scanner/stop              停止 scanner
-  POST /api/scheduler/start           启动 scheduler
-  POST /api/scheduler/stop            停止 scheduler
+  POST /api/reset                   重置 (停 worker + 清 sessions/mailboxes)
 
-  GET  /api/processes                 列出所有 managed 进程
-  GET  /api/processes/{id}            进程详情
-  POST /api/processes/{id}/stop       停止进程
+  GET  /api/stats 简单统计
 
- 静态文件 (之后接 WebUI):
-  GET  /webui/*                       静态文件 (./webui/ 目录)
+  静态文件:
+  GET  /webui/*                     WebUI (./webui/)
 
 启动:
   python -m agents_chat.v2.server --port 8765 --data-dir ./data_v2
@@ -49,7 +39,6 @@ FastAPI Server for v2.0 — HTTP API + WebUI 静态文件.
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 import os
 import sys
@@ -66,34 +55,22 @@ from pydantic import BaseModel, Field
 
 from .files.channel import Channel
 from .files.mailbox import Mailbox
-from .process_manager import ManagedProcess, ProcessManager
 from .session_manager import SessionManager
 from .state_board import StateBoard
 
 
 # =============================================================================
-# Pydantic models
+# 数据模型
 # =============================================================================
 
 
-class StartAgentRequest(BaseModel):
-    cli: str = "mock"
-    capabilities: list[str] = Field(default_factory=list)
-    channel: str = "general"
-    system_prompt: str = ""
-    workspace_dir: str | None = None
-    poll_interval: float = 2.0
-
-
 class PostMessageRequest(BaseModel):
+    from_: str = Field(alias="from")
     content: str
-    from_: str = Field(default="god", alias="from")
-    type: str = "mention"
-    mentions: list[str] = Field(default_factory=list)
+    type: str = "text"
+    mentions: list[str] = []
     ref_msg_id: str = ""
     task_id: str = ""
-
-    model_config = {"populate_by_name": True}
 
 
 class AddMemberRequest(BaseModel):
@@ -102,17 +79,11 @@ class AddMemberRequest(BaseModel):
 
 class AddAdminRequest(BaseModel):
     agent_id: str
-    is_worker: bool = True
-
-
-class DecideRequest(BaseModel):
-    task_id: str
-    topic: str
-    channel: str = ""
+    is_human: bool = False
 
 
 # =============================================================================
-# App factory
+# App Factory
 # =============================================================================
 
 
@@ -124,16 +95,10 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
     for sub in ["channels", "mailboxes", "sessions", "locks"]:
         (data_dir / sub).mkdir(parents=True, exist_ok=True)
 
-    pm = ProcessManager(data_dir=data_dir)
-
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # Startup: 清理已退出的进程
-        pm.cleanup_finished()
         print(f"[server] ▶ http://{host}:{port}  data_dir={data_dir}")
         yield
-        # Shutdown: 停所有进程
-        pm.stop_all()
         print("[server] ⏹ stopped")
 
     app = FastAPI(
@@ -151,131 +116,46 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
         allow_headers=["*"],
     )
 
-    # ====================== Health ======================
-
-    @app.get("/")
-    def root():
-        return {
-            "ok": True,
-            "name": "agents-chat-channel v2.0",
-            "data_dir": str(data_dir),
-            "endpoints": "/docs",
-        }
+    # -------------------------------------------------------------------------
+    # Health
+    # -------------------------------------------------------------------------
 
     @app.get("/api/health")
     def health():
         return {"ok": True, "ts": time.time()}
 
-    # ====================== Agents ======================
-
-    @app.get("/api/agents")
-    def list_agents():
-        """列所有 agent (从 mailboxes/ 目录扫)."""
-        mb_dir = data_dir / "mailboxes"
-        agents = []
-        for p in sorted(mb_dir.glob("*.json")):
-            agent_id = p.stem
-            mb = Mailbox(p, agent_id)
-            proc = pm.get_agent_process(agent_id)
-            agents.append({
-                "agent_id": agent_id,
-                "mailbox_count": mb.count(),
-                "running": proc.is_running() if proc else False,
-                "pid": proc.pid if proc else 0,
-                "process_id": proc.process_id if proc else "",
-            })
-        return {"agents": agents, "count": len(agents)}
-
-    @app.get("/api/agents/{agent_id}")
-    def get_agent(agent_id: str):
-        mb_path = data_dir / "mailboxes" / f"{agent_id}.json"
-        if not mb_path.exists():
-            raise HTTPException(404, f"agent {agent_id} not found")
-        mb = Mailbox(mb_path, agent_id)
-        sess_path = data_dir / "sessions" / f"{agent_id}.json"
-        sess = SessionManager(sess_path, agent_id) if sess_path.exists() else None
-        proc = pm.get_agent_process(agent_id)
-        return {
-            "agent_id": agent_id,
-            "mailbox_count": mb.count(),
-            "active_sessions": len(sess.list_active()) if sess else 0,
-            "total_sessions": len(sess.list_all()) if sess else 0,
-            "process": proc.to_dict() if proc else None,
-            "workspace_dir": str(data_dir / "workspaces" / agent_id),
-        }
-
-    @app.post("/api/agents/{agent_id}/start")
-    def start_agent(agent_id: str, req: StartAgentRequest):
-        try:
-            proc = pm.start_agent(
-                agent_id=agent_id,
-                cli=req.cli,
-                capabilities=req.capabilities,
-                channel=req.channel,
-                system_prompt=req.system_prompt,
-                workspace_dir=req.workspace_dir,
-                poll_interval=req.poll_interval,
-            )
-        except RuntimeError as e:
-            raise HTTPException(409, str(e))
-        return {"ok": True, "process": proc.to_dict()}
-
-    @app.post("/api/agents/{agent_id}/stop")
-    def stop_agent(agent_id: str):
-        if not pm.stop_by_agent_id(agent_id):
-            raise HTTPException(404, f"agent {agent_id} not running")
-        return {"ok": True}
-
-    @app.post("/api/agents/{agent_id}/tick")
-    def tick_agent(agent_id: str):
-        """触发 agent 立即 tick (写一个特殊 mail 让它立刻处理)."""
-        mb_path = data_dir / "mailboxes" / f"{agent_id}.json"
-        if not mb_path.exists():
-            raise HTTPException(404, f"agent {agent_id} not found")
-        mb = Mailbox(mb_path, agent_id)
-        mb.append(
-            type="system_notify",
-            content="[server] tick requested",
-            channel="",
-            ref_msg_id="",
-            extra={"source": "server", "action": "tick"},
-        )
-        return {"ok": True, "tick_sent": True}
-
-    @app.get("/api/agents/{agent_id}/log")
-    def agent_log(agent_id: str, tail: int = Query(100, ge=1, le=1000)):
-        proc = pm.get_agent_process(agent_id)
-        if not proc:
-            raise HTTPException(404, f"agent {agent_id} process not found")
-        log = pm.read_log(proc.process_id, tail=tail)
-        return {"agent_id": agent_id, "process_id": proc.process_id, "log": log}
-
-    # ====================== Channels ======================
+    # -------------------------------------------------------------------------
+    # Channels
+    # -------------------------------------------------------------------------
 
     @app.get("/api/channels")
     def list_channels():
-        ch_dir = data_dir / "channels"
-        chs = []
-        for p in sorted(ch_dir.glob("*.jsonl")):
-            name = p.stem
-            ch = Channel(p, name)
-            chs.append({
+        channels = []
+        for ch_path in sorted((data_dir / "channels").glob("*.jsonl")):
+            name = ch_path.stem  # "general" from "general.jsonl"
+            ch = Channel(ch_path, name)
+            msgs = ch.read(tail=1)
+            channels.append({
                 "name": name,
-                "messages": len(ch),
+                "messages": ch.count(),
                 "members": ch.list_members(),
                 "admins": ch.list_admins(),
                 "human_admins": ch.list_human_admins(),
             })
-        return {"channels": chs, "count": len(chs)}
+        return {"channels": channels, "count": len(channels)}
 
     @app.get("/api/channels/{name}/messages")
-    def channel_messages(name: str, limit: int = Query(50, ge=1, le=500)):
+    def get_channel_messages(
+        name: str,
+        limit: int = Query(100, ge=1, le=1000),
+        before: int = Query(0, ge=0),
+    ):
         ch_path = data_dir / "channels" / f"{name}.jsonl"
         if not ch_path.exists():
             raise HTTPException(404, f"channel {name} not found")
         ch = Channel(ch_path, name)
-        msgs = ch.tail(limit)
-        return {"channel": name, "count": len(msgs), "messages": msgs}
+        messages = ch.read(limit=limit, before=before)
+        return {"messages": messages, "count": len(messages)}
 
     @app.post("/api/channels/{name}/messages")
     def post_message(name: str, req: PostMessageRequest):
@@ -290,6 +170,15 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
             task_id=req.task_id,
         )
         return {"ok": True, "msg_id": msg_id}
+
+    @app.delete("/api/channels/{name}/messages")
+    def clear_channel_messages(name: str):
+        """清空频道所有消息 (保留频道本身)."""
+        ch_path = data_dir / "channels" / f"{name}.jsonl"
+        if not ch_path.exists():
+            raise HTTPException(404, f"channel {name} not found")
+        ch_path.write_text("", encoding="utf-8")
+        return {"ok": True, "cleared": name}
 
     @app.get("/api/channels/{name}/meta")
     def channel_meta(name: str):
@@ -307,227 +196,191 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
     @app.post("/api/channels/{name}/members")
     def add_member(name: str, req: AddMemberRequest):
         ch_path = data_dir / "channels" / f"{name}.jsonl"
+        if not ch_path.exists():
+            raise HTTPException(404, f"channel {name} not found")
         ch = Channel(ch_path, name)
-        added = ch.add_member(req.agent_id)
-        return {"ok": True, "added": added, "members": ch.list_members()}
+        ch.add_member(req.agent_id)
+        return {"ok": True}
 
     @app.post("/api/channels/{name}/admins")
     def add_admin(name: str, req: AddAdminRequest):
         ch_path = data_dir / "channels" / f"{name}.jsonl"
+        if not ch_path.exists():
+            raise HTTPException(404, f"channel {name} not found")
         ch = Channel(ch_path, name)
-        added = ch.add_admin(req.agent_id, is_worker=req.is_worker)
+        ch.add_admin(req.agent_id, is_worker=not req.is_human)
+        return {"ok": True}
+
+    # -------------------------------------------------------------------------
+    # Agents / Workers
+    # -------------------------------------------------------------------------
+
+    @app.get("/api/agents")
+    def list_agents():
+        """列出所有 worker (按 mailbox 文件)."""
+        agents = []
+        for mb_path in sorted((data_dir / "mailboxes").glob("*.json")):
+            agent_id = mb_path.stem
+            mb = Mailbox(mb_path, agent_id)
+            pending = mb.peek()
+            agents.append({
+                "agent_id": agent_id,
+                "pending": len(pending),
+                "log_path": str(data_dir / "logs" / f"{agent_id}.log"),
+            })
+        return {"agents": agents, "count": len(agents)}
+
+    @app.get("/api/agents/{agent_id}")
+    def get_agent(agent_id: str):
+        """agent 快照: sessions + mailbox + state_board."""
+        sb = StateBoard(data_dir / "state_board.json")
+        mb_path = data_dir / "mailboxes" / f"{agent_id}.json"
+        mb = Mailbox(mb_path, agent_id)
+        sessions_dir = data_dir / "sessions"
+        sm = SessionManager(sessions_dir / f"{agent_id}.json", agent_id)
         return {
-            "ok": True, "added": added,
-            "admins": ch.list_admins(),
-            "human_admins": ch.list_human_admins(),
+            "agent_id": agent_id,
+            "pending_mails": mb.peek(),
+            "active_sessions": [s.to_dict() for s in sm.list_active()],
+            "all_sessions": [s.to_dict() for s in sm.list_all()],
+            "tasks": sb.list_by_agent(agent_id),
         }
 
-    # ====================== Mailboxes ======================
+    @app.post("/api/agents/{agent_id}/start")
+    def start_agent(agent_id: str):
+        """启动 worker 进程 (后台异步执行,立即返回)."""
+        import subprocess, sys
+        log_path = data_dir / "logs" / f"{agent_id}.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        p = subprocess.Popen(
+            [sys.executable, "-m", "agents_chat.v2.main",
+             "run-worker", agent_id, "--data-dir", str(data_dir)],
+            stdout=open(log_path, "a"),
+            stderr=subprocess.STDOUT,
+        )
+        return {"ok": True, "process": {"agent_id": agent_id, "pid": p.pid}}
+
+    @app.post("/api/agents/{agent_id}/stop")
+    def stop_agent(agent_id: str):
+        """通过发 stop 邮件停止 worker."""
+        mb_path = data_dir / "mailboxes" / f"{agent_id}.json"
+        mb = Mailbox(mb_path, agent_id)
+        mb.push(to=agent_id, subject="__STOP__", body="")
+        return {"ok": True}
+
+    @app.get("/api/agents/{agent_id}/log")
+    def get_agent_log(agent_id: str, tail: int = Query(50, ge=1, le=500)):
+        log_path = data_dir / "logs" / f"{agent_id}.log"
+        if not log_path.exists():
+            return {"log": "", "lines": 0}
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        return {"log": "\n".join(lines[-tail:]), "lines": len(lines)}
+
+    # -------------------------------------------------------------------------
+    # Mailboxes
+    # -------------------------------------------------------------------------
 
     @app.get("/api/mailboxes/{agent_id}")
     def get_mailbox(agent_id: str):
         mb_path = data_dir / "mailboxes" / f"{agent_id}.json"
-        if not mb_path.exists():
-            raise HTTPException(404, f"mailbox {agent_id} not found")
         mb = Mailbox(mb_path, agent_id)
-        return {"agent_id": agent_id, "count": mb.count(), "mails": mb.peek()}
+        return {"mails": mb.peek(), "count": mb.count()}
 
     @app.delete("/api/mailboxes/{agent_id}")
     def clear_mailbox(agent_id: str):
         mb_path = data_dir / "mailboxes" / f"{agent_id}.json"
-        if not mb_path.exists():
-            raise HTTPException(404, f"mailbox {agent_id} not found")
-        # 清空用 read_and_clear (atomic)
-        cleared = Mailbox(mb_path, agent_id).read_and_clear()
-        return {"ok": True, "cleared": len(cleared)}
+        if mb_path.exists():
+            mb_path.write_text(
+                json.dumps({"agent": agent_id, "pending": []}, ensure_ascii=False),
+                encoding="utf-8"
+            )
+        return {"ok": True}
 
-    # ====================== Sessions ======================
+    # -------------------------------------------------------------------------
+    # Sessions
+    # -------------------------------------------------------------------------
 
     @app.get("/api/sessions/{agent_id}")
-    def list_sessions(agent_id: str):
-        sess_path = data_dir / "sessions" / f"{agent_id}.json"
-        if not sess_path.exists():
-            return {"agent_id": agent_id, "sessions": [], "count": 0}
-        sm = SessionManager(sess_path, agent_id)
-        sessions = sm.list_all()
-        return {
-            "agent_id": agent_id,
-            "count": len(sessions),
-            "sessions": [s.to_dict() for s in sessions],
-        }
+    def get_sessions(agent_id: str):
+        sessions_dir = data_dir / "sessions"
+        sm = SessionManager(sessions_dir / f"{agent_id}.json", agent_id)
+        return {"sessions": [s.to_dict() for s in sm.list_all()], "count": len(sm.list_all())}
 
     @app.get("/api/sessions/{agent_id}/active")
-    def active_sessions(agent_id: str):
-        sess_path = data_dir / "sessions" / f"{agent_id}.json"
-        if not sess_path.exists():
-            return {"agent_id": agent_id, "sessions": [], "count": 0}
-        sm = SessionManager(sess_path, agent_id)
-        sessions = sm.list_active()
-        return {
-            "agent_id": agent_id,
-            "count": len(sessions),
-            "sessions": [s.to_dict() for s in sessions],
-        }
+    def get_active_sessions(agent_id: str):
+        sessions_dir = data_dir / "sessions"
+        sm = SessionManager(sessions_dir / f"{agent_id}.json", agent_id)
+        return {"sessions": [s.to_dict() for s in sm.list_active()], "count": len(sm.list_active())}
 
-    @app.post("/api/sessions/{agent_id}/decide")
-    def decide_session(agent_id: str, req: DecideRequest):
-        """decide_session API (LLM-free, 纯程序化)."""
-        sess_path = data_dir / "sessions" / f"{agent_id}.json"
-        if not sess_path.exists():
-            # 新建空 SM
-            sm = SessionManager(sess_path, agent_id)
-        else:
-            sm = SessionManager(sess_path, agent_id)
-        session, is_new = sm.decide_session(
-            task_id=req.task_id, topic=req.topic, channel=req.channel,
-        )
-        return {
-            "agent_id": agent_id,
-            "is_new": is_new,
-            "session": session.to_dict(),
-        }
-
-    # ====================== State Board ======================
+    # -------------------------------------------------------------------------
+    # State Board
+    # -------------------------------------------------------------------------
 
     @app.get("/api/state_board")
     def get_state_board():
         sb = StateBoard(data_dir / "state_board.json")
-        return {"tasks": sb.list_all()}
+        data = sb._read_unlocked()
+        return {"tasks": data.get("tasks", {})}  # 始终返回 {"tasks": {...}}
 
     @app.get("/api/state_board/{task_id}")
-    def get_task_state(task_id: str):
+    def get_task(task_id: str):
         sb = StateBoard(data_dir / "state_board.json")
         task = sb.get(task_id)
         if not task:
             raise HTTPException(404, f"task {task_id} not found")
-        return {"task_id": task_id, "task": task}
+        return {"task": task}
 
-    # ====================== Scanner ======================
+    # -------------------------------------------------------------------------
+    # Reset
+    # -------------------------------------------------------------------------
 
-    @app.get("/api/scanner/status")
-    def scanner_status():
-        state_file = data_dir / "scanner_state.json"
-        if not state_file.exists():
-            return {"ok": True, "offsets": {}}
-        try:
-            data = json.loads(state_file.read_text("utf-8"))
-            return {"ok": True, "offsets": data.get("offsets", {}), "updated_at": data.get("updated_at")}
-        except (json.JSONDecodeError, OSError):
-            return {"ok": False, "offsets": {}}
-
-    @app.post("/api/scanner/start")
-    def start_scanner():
-        try:
-            proc = pm.start_scanner()
-        except RuntimeError as e:
-            raise HTTPException(409, str(e))
-        return {"ok": True, "process": proc.to_dict()}
-
-    @app.post("/api/scanner/stop")
-    def stop_scanner():
-        for p in pm.list_processes(kind="scanner"):
-            if p.is_running():
-                pm.stop(p.process_id)
-        return {"ok": True}
-
-    # ====================== Scheduler ======================
-
-    @app.get("/api/scheduler/status")
-    def scheduler_status():
-        """Scheduler 运行状态: 有 running scheduler 进程 → True."""
-        for p in pm.list_processes(kind="scheduler"):
-            if p.is_running():
-                return {"running": True, "process": p.to_dict()}
-        return {"running": False}
-
-    @app.post("/api/scheduler/start")
-    def start_scheduler():
-        try:
-            proc = pm.start_scheduler()
-        except RuntimeError as e:
-            raise HTTPException(409, str(e))
-        return {"ok": True, "process": proc.to_dict()}
-
-    @app.post("/api/scheduler/stop")
-    def stop_scheduler():
-        for p in pm.list_processes(kind="scheduler"):
-            if p.is_running():
-                pm.stop(p.process_id)
-        return {"ok": True}
-
-    # ====================== Processes ======================
-
-    @app.get("/api/processes")
-    def list_processes():
-        pm.cleanup_finished()
-        procs = pm.list_processes()
-        return {
-            "count": len(procs),
-            "processes": [p.to_dict() for p in procs],
+    @app.post("/api/reset")
+    def reset_all():
+        """重置: 停所有 worker + 清空 sessions + 清空 mailboxes (保留 channels)."""
+        results = {
+            "sessions_cleared": 0,
+            "mailboxes_cleared": 0,
         }
 
-    @app.get("/api/processes/{process_id}")
-    def get_process(process_id: str):
-        p = pm.get(process_id)
-        if not p:
-            raise HTTPException(404, f"process {process_id} not found")
-        return p.to_dict()
+        # 清空 sessions
+        sessions_dir = data_dir / "sessions"
+        if sessions_dir.exists():
+            for f in sessions_dir.glob("*.json"):
+                f.write_text(
+                    json.dumps({"agent": f.stem, "sessions": {}}, ensure_ascii=False),
+                    encoding="utf-8"
+                )
+                results["sessions_cleared"] += 1
 
-    @app.post("/api/processes/{process_id}/stop")
-    def stop_process(process_id: str):
-        if not pm.stop(process_id):
-            raise HTTPException(404, f"process {process_id} not found or not running")
-        return {"ok": True}
+        # 清空 mailboxes
+        mailboxes_dir = data_dir / "mailboxes"
+        if mailboxes_dir.exists():
+            for f in mailboxes_dir.glob("*.json"):
+                f.write_text(
+                    json.dumps({"agent": f.stem, "pending": []}, ensure_ascii=False),
+                    encoding="utf-8"
+                )
+                results["mailboxes_cleared"] += 1
 
-    # ====================== Stats ======================
+        return {"ok": True, **results}
+
+    # -------------------------------------------------------------------------
+    # Stats
+    # -------------------------------------------------------------------------
 
     @app.get("/api/stats")
-    def stats():
-        ch_dir = data_dir / "channels"
-        mb_dir = data_dir / "mailboxes"
-        sess_dir = data_dir / "sessions"
-        # 频道消息总数
-        total_msgs = 0
-        for p in ch_dir.glob("*.jsonl"):
-            total_msgs += sum(1 for _ in p.open("rb"))
-        # 邮箱邮件总数
-        total_mails = 0
-        for p in mb_dir.glob("*.json"):
-            try:
-                total_mails += Mailbox(p, p.stem).count()
-            except (OSError, json.JSONDecodeError):
-                pass
-        # session 总数
-        total_sessions = 0
-        for p in sess_dir.glob("*.json"):
-            try:
-                sm = SessionManager(p, p.stem)
-                total_sessions += len(sm.list_all())
-            except (OSError, json.JSONDecodeError):
-                pass
-        # 进程
-        pm.cleanup_finished()
-        agents_running = sum(1 for p in pm.list_processes(kind="agent") if p.is_running())
-        scanner_running = pm.is_kind_running("scanner")
-        scheduler_running = pm.is_kind_running("scheduler")
-        return {
-            "channels": len(list(ch_dir.glob("*.jsonl"))),
-            "agents": len(list(mb_dir.glob("*.json"))),
-            "total_messages": total_msgs,
-            "total_mails": total_mails,
-            "total_sessions": total_sessions,
-            "running": {
-                "agents": agents_running,
-                "scanner": scanner_running,
-                "scheduler": scheduler_running,
-            },
-        }
+    def get_stats():
+        channels = len(list((data_dir / "channels").glob("*.jsonl")))
+        agents = len(list((data_dir / "mailboxes").glob("*.json")))
+        sb = StateBoard(data_dir / "state_board.json")
+        tasks = len(sb.list_all())
+        return {"channels": channels, "agents": agents, "tasks": tasks}
 
-    # ====================== Static (WebUI 占位) ======================
+    # -------------------------------------------------------------------------
+    # WebUI Static
+    # -------------------------------------------------------------------------
 
-    # server.py 在 src/agents_chat/v2/server.py, webui/ 在项目根
-    # parent.parent.parent = src/, 再上一层 = 项目根
-    webui_dir = Path(__file__).parent.parent.parent.parent / "webui"
+    webui_dir = Path(__file__).parent.parent.parent / "webui"
     if webui_dir.exists():
         app.mount("/webui", StaticFiles(directory=str(webui_dir), html=True), name="webui")
 
@@ -544,7 +397,6 @@ def main(argv: list[str] | None = None):
     parser.add_argument("--data-dir", default=os.environ.get("AGENTS_CHAT_DATA_DIR", "./data_v2"))
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--reload", action="store_true", help="dev mode auto-reload")
     args = parser.parse_args(argv)
 
     data_dir = Path(args.data_dir).resolve()
@@ -556,10 +408,7 @@ def main(argv: list[str] | None = None):
         print("ERROR: uvicorn not installed. pip install 'uvicorn[standard]>=0.27'")
         sys.exit(1)
 
-    uvicorn.run(
-        app, host=args.host, port=args.port, reload=args.reload,
-        log_level="info",
-    )
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
 
 if __name__ == "__main__":

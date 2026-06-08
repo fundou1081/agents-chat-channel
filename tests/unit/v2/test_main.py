@@ -38,7 +38,7 @@ class TestMainPost:
     def test_post_creates_message(self, tmp_path):
         data_dir = str(tmp_path / "v2_data")
         run_cli("init", data_dir=data_dir)
-        r = run_cli("post", "general", "@qwencode 写个 hello.py", "--sender", "god", data_dir=data_dir)
+        r = run_cli("post", "general", "@qwencode 写个 hello.py", "--from", "god", data_dir=data_dir)
         assert r.returncode == 0
         # 频道应该有 1 条
         r2 = run_cli("tail", "general", "--n", "5", data_dir=data_dir)

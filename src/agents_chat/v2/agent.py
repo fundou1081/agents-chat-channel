@@ -23,8 +23,7 @@ Agent for v2.0 — 1 worker = 4 组件容器 (Perceive-Decide-Remember-Act).
     agent.comms          # CommunicationComponent
     agent.sessions       # SessionManager
     agent.cli            # CLI
-    agent.event_handler  # EventHandler (推荐)
-    agent.scheduler      # EventHandler (向后兼容 alias)
+    agent.event_handler  # EventHandler
     agent.mailbox        # Mailbox (this agent's own)
 """
 from __future__ import annotations
@@ -160,7 +159,7 @@ class Agent:
         # 向后兼容: 老代码用 agent.scheduler 也可访问
         self.scheduler = self.event_handler
 
-    # ============ 公共 API (向后兼容) ============
+    # ============ 公共 API ============
 
     def stop(self):
         """停整个 agent: 设 stop 事件 + 取消 run task."""

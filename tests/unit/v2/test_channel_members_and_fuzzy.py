@@ -4,7 +4,7 @@ import asyncio
 from pathlib import Path
 
 from agents_chat.v2.files.channel import Channel
-from agents_chat.v2.scanner import fuzzy_resolve_mention, Scanner
+from agents_chat.v2.files.channel import Channel, fuzzy_resolve_mention
 
 
 class TestChannelMembers:
@@ -94,64 +94,3 @@ class TestFuzzyResolveMention:
         assert fuzzy_resolve_mention("Seller", ["seller", "buyer"]) is None
         assert fuzzy_resolve_mention("SELLER", ["seller", "buyer"]) is None
 
-
-class TestScannerFuzzyRoute:
-    @pytest.mark.asyncio
-    async def test_mention_fuzzy_resolved(self, tmp_path):
-        """@sell 模糊匹配到 seller-fish → seller-fish 收到 mention."""
-        s = Scanner(tmp_path, channel_names=["fish-market"])
-        # 注册 agent + 加 channel member
-        (tmp_path / "mailboxes" / "seller-fish.json").write_text('{"agent":"seller-fish","pending":[]}')
-        (tmp_path / "mailboxes" / "buyer-fish.json").write_text('{"agent":"buyer-fish","pending":[]}')
-        s.channel("fish-market").add_member("seller-fish")
-        s.channel("fish-market").add_member("buyer-fish")
-        # god 发 @sell (模糊匹配 seller-fish)
-        ch = s.channel("fish-market")
-        ch.append(from_="god", content="@sell 100 元一条", type="mention", mentions=["sell"])
-        await s._scan_once()
-        # seller-fish 收到 (buyer-fish 没收到, 因为 @sell 只模糊匹配到 seller-fish)
-        assert len(s.mailbox_of("seller-fish").peek()) == 1
-        assert s.mailbox_of("buyer-fish").peek() == []
-
-    @pytest.mark.asyncio
-    async def test_task_broadcast_to_members_only(self, tmp_path):
-        """[TASK] 只广播给频道成员, 不给非成员."""
-        s = Scanner(tmp_path, channel_names=["fish-market"])
-        # 3 个 agent: seller (成员), buyer (成员), stranger (非成员)
-        for aid in ["seller-fish", "buyer-fish", "stranger"]:
-            (tmp_path / "mailboxes" / f"{aid}.json").write_text(f'{{"agent":"{aid}","pending":[]}}')
-        s.channel("fish-market").add_member("seller-fish")
-        s.channel("fish-market").add_member("buyer-fish")
-        # god 发 [TASK]
-        ch = s.channel("fish-market")
-        ch.append(from_="god", content="[TASK task_bargain] 开价 100", type="task_broadcast")
-        await s._scan_once()
-        # seller + buyer 收到, stranger 没收到
-        assert len(s.mailbox_of("seller-fish").peek()) == 1
-        assert len(s.mailbox_of("buyer-fish").peek()) == 1
-        assert s.mailbox_of("stranger").peek() == []
-
-    @pytest.mark.asyncio
-    async def test_no_fuzzy_match_silently_dropped(self, tmp_path):
-        """@z 没匹配到任何 agent → 静默不投递."""
-        s = Scanner(tmp_path, channel_names=["fish-market"])
-        (tmp_path / "mailboxes" / "seller-fish.json").write_text('{"agent":"seller-fish","pending":[]}')
-        ch = s.channel("fish-market")
-        ch.append(from_="god", content="@z 你好", type="mention", mentions=["z"])
-        await s._scan_once()
-        # 谁都没收到
-        assert s.mailbox_of("seller-fish").peek() == []
-
-    @pytest.mark.asyncio
-    async def test_mention_keeps_original_in_extra(self, tmp_path):
-        """@sell 模糊匹配到 seller-fish, 邮件里保留原 mention @sell (extra_mentions)."""
-        s = Scanner(tmp_path, channel_names=["fish-market"])
-        (tmp_path / "mailboxes" / "seller-fish.json").write_text('{"agent":"seller-fish","pending":[]}')
-        s.channel("fish-market").add_member("seller-fish")
-        ch = s.channel("fish-market")
-        ch.append(from_="god", content="@sell 开价", mentions=["sell"])
-        await s._scan_once()
-        pending = s.mailbox_of("seller-fish").peek()
-        assert len(pending) == 1
-        # extra_mentions 含原 mention
-        assert "sell" in pending[0].get("extra_mentions", [])
