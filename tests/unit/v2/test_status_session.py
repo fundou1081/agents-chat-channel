@@ -1,4 +1,7 @@
-"""Unit tests for v2.0 STATUS parser + SessionIndex."""
+"""Unit tests for v2.0 STATUS parser.
+
+注意: SessionIndex 测试已移除 (2026-06-08 清理) - 该类功能被 SessionManager.remote_id 覆盖.
+"""
 import pytest
 
 from agents_chat.v2.status import (
@@ -8,7 +11,6 @@ from agents_chat.v2.status import (
     format_status_block,
     parse_status_block,
 )
-from agents_chat.v2.session_index import SessionIndex
 
 
 class TestStatusParse:
@@ -139,58 +141,3 @@ class TestStatusParse:
         assert s3.confidence == s.confidence
 
 
-class TestSessionIndex:
-    def test_create_and_get(self, tmp_path):
-        idx = SessionIndex(tmp_path / "qwencode.json", "qwencode")
-        local_id = idx.create(topic="数据库", channel="general", remote_id="qwen_sess_42")
-        sess = idx.get(local_id)
-        assert sess["remote_session_id"] == "qwen_sess_42"
-        assert sess["topic"] == "数据库"
-        assert sess["channel"] == "general"
-
-    def test_get_remote(self, tmp_path):
-        idx = SessionIndex(tmp_path / "qwencode.json", "qwencode")
-        local_id = idx.create(remote_id="qwen_sess_99")
-        assert idx.get_remote(local_id) == "qwen_sess_99"
-
-    def test_set_remote_updates(self, tmp_path):
-        idx = SessionIndex(tmp_path / "qwencode.json", "qwencode")
-        local_id = idx.create()  # remote_id empty
-        assert idx.get_remote(local_id) is None
-        idx.set_remote(local_id, "qwen_sess_42")
-        assert idx.get_remote(local_id) == "qwen_sess_42"
-
-    def test_find_by_topic(self, tmp_path):
-        idx = SessionIndex(tmp_path / "qwencode.json", "qwencode")
-        idx.create(topic="数据库连接池", channel="general")
-        idx.create(topic="安全审计", channel="general")
-        # 模糊匹配
-        assert idx.find_by_topic("数据库") is not None
-        assert idx.find_by_topic("安全") is not None
-        assert idx.find_by_topic("不存在的") is None
-
-    def test_touch_updates_last_active(self, tmp_path):
-        idx = SessionIndex(tmp_path / "qwencode.json", "qwencode")
-        local_id = idx.create()
-        before = idx.get(local_id)["last_active"]
-        import time; time.sleep(0.01)
-        idx.touch(local_id)
-        after = idx.get(local_id)["last_active"]
-        assert after >= before
-
-    def test_remove(self, tmp_path):
-        idx = SessionIndex(tmp_path / "qwencode.json", "qwencode")
-        local_id = idx.create()
-        assert idx.remove(local_id) is True
-        assert idx.get(local_id) is None
-
-    def test_persistence(self, tmp_path):
-        """文件持久化: 重建 SessionIndex 应该读到数据."""
-        p = tmp_path / "qwencode.json"
-        idx1 = SessionIndex(p, "qwencode")
-        local_id = idx1.create(topic="x", remote_id="qwen_sess_42")
-        # 重新构造 (模拟重启)
-        idx2 = SessionIndex(p, "qwencode")
-        sess = idx2.get(local_id)
-        assert sess is not None
-        assert sess["remote_session_id"] == "qwen_sess_42"
