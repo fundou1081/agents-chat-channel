@@ -37,7 +37,7 @@ from typing import Any, Optional
 
 from .cli.base import CLI
 from .communication import CommunicationComponent
-from .decision import DecisionConfig, DecisionMaker
+from .decision import Decision, DecisionConfig, DecisionMaker
 from .gates import Gate, GateChain, GateResult
 from .files.channel import Channel
 from .files.lock import (
@@ -117,6 +117,7 @@ class EventHandler:
         decision_config: DecisionConfig | None = None,
     ):
         self.comms = comms
+        self._stop_event = getattr(comms, '_stop_event', asyncio.Event())
         self.sessions = sessions
         self.cli = cli
         self.agent_id = agent_id
@@ -137,13 +138,54 @@ class EventHandler:
             # 默认: 拿 environment 变量构造 (如果环境没设 api_key, is_ready=False)
             self.decision_maker = DecisionMaker(DecisionConfig())
 
+        # 订阅 (主动模式): 动态订阅的频道列表
+        self.subscriptions: set[str] = set()
+        # 每个频道的读取 offset (增量读, 避免重复处理)
+        self._channel_offsets: dict[str, int] = {}
+        self.poll_interval = 3.0  # 主动模式轮询间隔 (秒)
+
+    # ------------------------------------------------------------------
+    # 订阅管理 (运行时动态配置)
+    # ------------------------------------------------------------------
+
+    def add_subscription(self, channel: str) -> None:
+        """动态订阅频道."""
+        self.subscriptions.add(channel)
+        # 初始化 offset (从头读)
+        if channel not in self._channel_offsets:
+            self._channel_offsets[channel] = 0
+
+    def remove_subscription(self, channel: str) -> None:
+        """取消订阅频道."""
+        self.subscriptions.discard(channel)
+
+    def clear_subscriptions(self) -> None:
+        """清空所有订阅."""
+        self.subscriptions.clear()
+
     # ------------------------------------------------------------------
     # 主循环
     # ------------------------------------------------------------------
 
     async def run(self):
-        """听 comms 事件, 处理."""
-        logger.info(f"[{self.agent_id}] scheduler ▶ run")
+        """听 comms 事件, 处理 (被动模式)."""
+        logger.info(f"[{self.agent_id}] scheduler ▶ run (passive)")
+        try:
+            async for event_type, event_data in self.comms.listen():
+                try:
+                    if event_type == "mail":
+                        await self.handle_mail(event_data)
+                    elif event_type == "stale_task":
+                        await self.handle_stale_task(event_data)
+                    elif event_type == "active_task":
+                        pass
+                except Exception as e:
+                    logger.warning(f"[{self.agent_id}] handle {event_type} error: {e}")
+                    traceback.print_exc()
+        except asyncio.CancelledError:
+            pass
+        finally:
+            logger.info(f"[{self.agent_id}] scheduler ⏹ stopped")
         try:
             async for event_type, event_data in self.comms.listen():
                 try:
@@ -161,6 +203,253 @@ class EventHandler:
             pass
         finally:
             logger.info(f"[{self.agent_id}] scheduler ⏹ stopped")
+
+
+    # ------------------------------------------------------------------
+    # 主动模式: run_proactive
+    # ------------------------------------------------------------------
+
+    async def run_proactive(self):
+        """主动模式: 轮询订阅的频道, DecisionMaker 决定要不要发言.
+
+        跟 run() 的区别:
+          - run(): 等 mail 事件 (Scanner 投递, 被动)
+          - run_proactive(): 自己轮询频道, DecisionMaker 主动决定发言
+        """
+        logger.info(
+            f"[{self.agent_id}] ▶ run_proactive "
+            f"(subscriptions={list(self.subscriptions)}, interval={self.poll_interval}s)"
+        )
+        self._run_task = asyncio.current_task()
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    for channel in list(self.subscriptions):
+                        await self._poll_channel(channel)
+                except Exception as e:
+                    logger.warning(f"[{self.agent_id}] poll error: {e}")
+                    traceback.print_exc()
+                try:
+                    await asyncio.wait_for(
+                        self._stop_event.wait(), timeout=self.poll_interval,
+                    )
+                except asyncio.TimeoutError:
+                    pass
+        except asyncio.CancelledError:
+            logger.info(f"[{self.agent_id}] run_proactive cancelled")
+        finally:
+            logger.info(f"[{self.agent_id}] run_proactive ⏹ stopped")
+
+    async def _poll_channel(self, channel: str):
+        """轮询单个频道, 检测新消息, 决定要不要发言."""
+        if not self.channels_dir:
+            return
+        from .files.channel import Channel
+        ch = Channel(self.channels_dir / f"{channel}.jsonl", channel)
+        offset = self._channel_offsets.get(channel, 0)
+
+        try:
+            messages, new_offset = ch.read_since(offset)
+        except Exception:
+            messages = []
+
+        if not messages:
+            return
+
+        # 更新 offset (下次从新位置读)
+        self._channel_offsets[channel] = new_offset
+
+        # DecisionMaker: 要不要发言
+        # 找自己的 session
+        my_sessions = [s for s in self.sessions.list_active() if s.channel == channel]
+        session = my_sessions[0] if my_sessions else None
+
+        # DecisionMaker: 要不要发言
+        decision = None
+        if self.decision_maker and self.decision_maker.is_ready:
+            try:
+                decision = await self.decision_maker.decide_speak(
+                    channel_messages=messages,
+                    role=self.system_prompt,
+                    session=session.to_dict() if session else None,
+                )
+            except Exception as e:
+                logger.warning(f"[{self.agent_id}] decide_speak error: {e}")
+
+        # Fallback: DecisionMaker 不可用时, 有新消息就回复
+        # (保证即使没配 api_key, agent 也能响应)
+        if not decision:
+            # 看最后一条消息是不是别人发的
+            last_msg = messages[-1] if messages else None
+            if last_msg and last_msg.get("from") != self.agent_id:
+                decision = Decision(action="speak", reason="fallback: DM not ready, reply to last message")
+            else:
+                return
+
+        # skip: 不发言
+        if decision.action == "skip":
+            return
+
+        # initiate: 主动发起
+        if decision.action == "initiate":
+            topic = getattr(decision, "topic", "") or f"channel:{channel}"
+            new_s = self.sessions.create(
+                topic=topic, channel=channel, task_id=f"initiate_{channel}",
+            )
+            prompt = self._build_initiate_prompt(decision, channel)
+            response = await self._execute_cli_for_proactive(prompt, new_s, channel)
+            if response:
+                await self._write_to_channel(channel, response, "initiate")
+            return
+
+        # speak: 回复
+        if decision.action == "speak":
+            # 用现有 session 或新建
+            if session:
+                s = session
+                is_new = False
+            else:
+                topic = messages[-1].get("content", "")[:50] if messages else f"reply:{channel}"
+                s = self.sessions.create(topic=topic, channel=channel, task_id=f"reply_{channel}")
+                is_new = True
+
+            prompt = self._build_reply_prompt(messages, s, channel)
+            response = await self._execute_cli_for_proactive(prompt, s, channel)
+            if response:
+                await self._write_to_channel(channel, response, "reply", ref_msg_id=messages[-1].get("id", "") if messages else "")
+            return
+
+    async def _execute_cli_for_proactive(self, prompt: str, session: Session, channel: str):
+        """主动模式调 CLI, 跟 _build_prompt + cli.execute 类似."""
+        try:
+            response = await self.cli.execute(
+                session_id=session.remote_id or "",
+                prompt=prompt,
+                workspace_dir=str(self.workspace_dir) if self.workspace_dir else "",
+            )
+        except Exception as e:
+            logger.warning(f"[{self.agent_id}] CLI error: {e}")
+            return None
+
+        if not response.ok:
+            logger.warning(f"[{self.agent_id}] CLI error: {response.error}")
+            return None
+
+        output_text = response.output_text
+
+        # OUTPUT GATE
+        if self.output_gates:
+            result = self.output_gates.run(output_text)
+            if not result.allowed:
+                logger.warning(f"[{self.agent_id}] output gate REJECTED: {result.reason}")
+                return None
+            if result.text != output_text:
+                output_text = result.text
+
+        return output_text
+
+    def _build_reply_prompt(self, messages: list[dict], session: Session, channel: str) -> str:
+        """构造主动模式回复的 prompt."""
+        role_intro = self.system_prompt or f"你是 {self.agent_id}"
+
+        # 最近 5 条消息作为 context
+        recent = messages[-5:] if len(messages) > 5 else messages
+        msg_lines = []
+        for m in recent:
+            frm = m.get("from", "?")
+            txt = (m.get("content", "") or "")[:300]
+            msg_lines.append(f"[{frm}]: {txt}")
+
+        msgs_str = "\n".join(msg_lines)
+
+        return f"""{role_intro}
+
+[频道 {channel} 最近消息]
+{msgs_str}
+
+[你的 session]
+  session_id: {session.session_id}
+  topic: {session.topic}
+  progress: {session.progress}%
+  next_action: {session.next_action}
+
+请回复频道 (简短, 带 STATUS 块):
+<!--STATUS
+ session_id: {session.session_id}
+ task_id: {session.task_id}
+ progress: <0-100>
+ summary: <你说的>
+ next_action: <等回复/成交>
+ confidence: high
+-->"""
+
+    def _build_initiate_prompt(self, decision, channel: str) -> str:
+        """构造主动模式发起的 prompt."""
+        role_intro = self.system_prompt or f"你是 {self.agent_id}"
+        topic = getattr(decision, "topic", "") or f"channel:{channel}"
+        content = getattr(decision, "content", "") or "你好"
+
+        return f"""{role_intro}
+
+[频道 {channel} 状态]
+  - 无消息, 你是第一个发言的
+
+[你要发起的话题]
+  topic: {topic}
+  content: {content}
+
+请发起对话 (简短, 带 STATUS 块):
+<!--STATUS
+ session_id: initiate
+ task_id: initiate_{channel}
+ progress: 0
+ summary: {content[:50]}
+ next_action: 等回复
+ confidence: high
+-->"""
+
+    async def _write_to_channel(
+        self, channel: str, content: str, msg_type: str = "reply",
+        ref_msg_id: str = "",
+    ):
+        """写消息到频道."""
+        if not self.channels_dir:
+            return
+        from .files.channel import Channel
+        ch = Channel(self.channels_dir / f"{channel}.jsonl", channel)
+
+        # 解析 STATUS 块
+        progress, next_action, summary = self._parse_status_block(content)
+
+        # 更新 session
+        sessions = self.sessions.list_active()
+        for s in sessions:
+            if s.channel == channel:
+                self.sessions.update(
+                    s.session_id,
+                    progress=progress,
+                    next_action=next_action,
+                )
+
+        ch.append(
+            from_=self.agent_id,
+            content=content,
+            type=msg_type,
+            ref_msg_id=ref_msg_id,
+            task_id=getattr(sessions[0], "task_id", "") if sessions else "",
+        )
+
+    def _parse_status_block(self, text: str) -> tuple[int, str, str]:
+        """从文本提取 progress/next_action/summary."""
+        progress_match = re.search(r"progress:\s*(\d+)", text)
+        next_match = re.search(r"next_action:\s*([^\n]+)", text)
+        summary_match = re.search(r"summary:\s*([^\n]+)", text)
+        return (
+            int(progress_match.group(1)) if progress_match else 0,
+            next_match.group(1).strip() if next_match else "",
+            summary_match.group(1).strip() if summary_match else text[:80],
+        )
+
 
     # ------------------------------------------------------------------
     # 处理 mail

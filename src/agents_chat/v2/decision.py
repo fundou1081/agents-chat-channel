@@ -342,6 +342,135 @@ content: {mail_content}
 
 
 # =============================================================================
+
+    async def decide_speak(
+        self,
+        channel_messages: list[dict],
+        role: str = "",
+        session: dict | None = None,
+    ) -> Decision:
+        """主动模式: 根据频道最近消息, 决定要不要发言.
+
+        参数:
+          - channel_messages: 频道最近消息, list of {from, content, type, ts, ...}
+          - role: worker 角色 (system_prompt)
+          - session: 当前 session (含 topic/progress/next_action)
+
+        返回:
+          - action="speak": 要发言 (content=回复内容, session_id=用哪个 session)
+          - action="new": 要发言但新建 session (topic=新话题)
+          - action="skip": 不发言, 等下一轮
+          - action="initiate": 频道空, 主动发起 (content=发起内容)
+        """
+        if not self.is_ready:
+            raise RuntimeError("DecisionMaker not ready (no client / config invalid)")
+
+        prompt = self._build_speak_prompt(channel_messages, role, session)
+        try:
+            raw = await self._client.chat(
+                model=self.config.model,
+                messages=[
+                    {"role": "system", "content": "你是频道对话决策助手. 只输出 JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=self.config.temperature,
+                timeout=self.config.timeout,
+            )
+        except Exception as e:
+            raise RuntimeError(f"LLM error during decide_speak: {e}") from e
+
+        return self._parse_speak(raw, channel_messages, session)
+
+    def _build_speak_prompt(
+        self, channel_messages: list[dict], role: str, session: dict | None,
+    ) -> str:
+        """构造 decide_speak 的 prompt."""
+        # 格式化频道消息
+        if not channel_messages:
+            msgs_str = "  (频道无消息, 冷启动)"
+        else:
+            lines = []
+            for m in channel_messages[-10:]:  # 最近 10 条
+                frm = m.get("from", "unknown")
+                typ = m.get("type", "message")
+                txt = (m.get("content", "") or "")[:150]
+                ts = m.get("ts", "")
+                lines.append(f"  [{ts}] {frm} ({typ}): {txt}")
+            msgs_str = "\n".join(lines)
+
+        # session 摘要
+        if session:
+            sess_str = (
+                f"  session_id: {session.get('session_id', '')}\n"
+                f"  topic: {session.get('topic', '')}\n"
+                f"  progress: {session.get('progress', 0)}%\n"
+                f"  next_action: {session.get('next_action', '')}\n"
+                f"  content_summary: {(session.get('content_summary', '') or '')[:100]}"
+            )
+        else:
+            sess_str = "  (无 active session)"
+
+        return f"""[Worker 角色]
+{role or '(无)'}
+
+[频道最近消息]
+{msgs_str}
+
+[当前 session 状态]
+{sess_str}
+
+[决定]
+你是这个频道的参与者. 请判断你现在应该发言吗?
+
+判断规则:
+  - 有跟你相关的新消息 → 应该回复 (action=speak)
+  - 消息已结束/成交/无关 → 不发言 (action=skip)
+  - 频道空 + 你有明确目标 → 主动发起 (action=initiate)
+
+[输出格式 - 严格 JSON, 单行]
+{{"action": "speak", "reason": "...", "content": "你要说的内容"}}
+或 {{"action": "skip", "reason": "..."}}
+或 {{"action": "initiate", "reason": "...", "topic": "话题", "content": "发起内容"}}
+"""
+
+    def _parse_speak(
+        self, raw: str, channel_messages: list[dict], session: dict | None,
+    ) -> Decision:
+        """解析 decide_speak 的 LLM 输出."""
+        raw = (raw or "").strip()
+        m = self._JSON_RE.search(raw)
+        if not m:
+            return Decision(
+                action="skip",
+                reason=f"decide_speak 输出无法解析: {raw[:100]}",
+                raw=raw,
+            )
+        try:
+            data = json.loads(m.group(0))
+        except json.JSONDecodeError:
+            return Decision(
+                action="skip",
+                reason=f"decide_speak JSON 解析失败",
+                raw=raw,
+            )
+
+        action = str(data.get("action", "")).lower().strip()
+        if action not in ("speak", "skip", "initiate"):
+            return Decision(
+                action="skip",
+                reason=f"decide_speak 非法 action '{action}', 跳过",
+                raw=raw,
+            )
+
+        return Decision(
+            action=action,
+            session_id=session.get("session_id", "") if session else "",
+            reason=str(data.get("reason", "")),
+            raw=raw,
+        )
+
+
+
 # Public exports
 # =============================================================================
 

@@ -72,6 +72,8 @@ class Agent:
         workspace_dir: str | Path | None = None,
         input_gates: list[Gate] | None = None,
         output_gates: list[Gate] | None = None,
+        subscriptions: list[str] | None = None,
+        mode: str = "passive",
         decision_config: DecisionConfig | None = None,
         decision_maker: DecisionMaker | None = None,
     ):
@@ -86,6 +88,11 @@ class Agent:
         self.output_gates = output_gates
         self.decision_config = decision_config
         self.decision_maker = decision_maker  # 优先于 decision_config
+        self.subscriptions = set(subscriptions or [])
+        self.mode = mode  # "passive" | "proactive"
+        # 主动模式下 poll_interval 稍大 (主动轮询不需要那么频繁)
+        if mode == "proactive" and poll_interval < 3.0:
+            poll_interval = max(poll_interval, 3.0)
 
         # ============ 文件 IO (per agent 自己的) ============
         self.mailbox = Mailbox(
@@ -156,12 +163,35 @@ class Agent:
             self._run_task.cancel()
             print(f"[{self.agent_id}] task cancel requested")
 
+    # ============ 订阅管理 (主动模式) ============
+
+    def add_subscription(self, channel: str) -> None:
+        """动态订阅频道 (运行时可调)."""
+        self.subscriptions.add(channel)
+        self.event_handler.add_subscription(channel)
+
+    def remove_subscription(self, channel: str) -> None:
+        """取消订阅频道."""
+        self.subscriptions.discard(channel)
+        self.event_handler.remove_subscription(channel)
+
+    def list_subscriptions(self) -> set[str]:
+        """返回当前订阅列表."""
+        return set(self.subscriptions)
+
     async def run(self):
-        """主循环. 委派给 event_handler."""
-        print(f"[{self.agent_id}] ▶ run (cli={self.cli.name}, components: comms+sessions+cli+event_handler)")
+        """主循环. 根据 mode 选 passive/proactive."""
+        print(f"[{self.agent_id}] ▶ run (mode={self.mode}, subscriptions={list(self.subscriptions)})")
         self._run_task = asyncio.current_task()
         try:
-            await self.event_handler.run()
+            if self.mode == "proactive" and self.subscriptions:
+                # 主动模式: 订阅频道 + 轮询
+                for ch in self.subscriptions:
+                    self.event_handler.add_subscription(ch)
+                await self.event_handler.run_proactive()
+            else:
+                # 被动模式: 等 mail 事件
+                await self.event_handler.run()
         except asyncio.CancelledError:
             print(f"[{self.agent_id}] run cancelled")
 
