@@ -87,7 +87,13 @@ class Agent:
         self.input_gates = input_gates
         self.output_gates = output_gates
         self.decision_config = decision_config
-        self.decision_maker = decision_maker  # 优先于 decision_config
+        # decision_maker 优先于 decision_config (只有传入非 None 才覆盖)
+        if decision_maker is not None:
+            self.decision_maker = decision_maker
+        elif decision_config:
+            self.decision_maker = DecisionMaker(decision_config)
+        else:
+            self.decision_maker = None
         self.subscriptions = set(subscriptions or [])
         self.mode = mode  # "passive" | "proactive"
         # 主动模式下 poll_interval 稍大 (主动轮询不需要那么频繁)

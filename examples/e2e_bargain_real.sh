@@ -108,11 +108,15 @@ $VENV -c "
 import sys; sys.path.insert(0, 'src')
 from agents_chat.v2.files.channel import Channel
 ch = Channel('$DATA_DIR/channels/fish-market.jsonl', 'fish-market')
-ch.add_admin('god')
+ch.add_admin('god')              # god 是频道管理员
 ch.add_member('seller-fish')
 ch.add_member('buyer-fish')
 ch.add_member('admin')
+# 白名单: 只允许 seller-fish 和 buyer-fish 响应
+ch.set_enabled_workers(['seller-fish', 'buyer-fish'])
+print('  admin:', ch.list_admins())
 print('  members:', ch.list_members())
+print('  enabled_workers:', ch.list_enabled_workers())
 "
 
 # =============================================================================

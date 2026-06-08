@@ -282,7 +282,20 @@ class Scanner:
         mail_data: {ref_msg_id, content, channel, task_id?, context_hint?}
         path: "email" (显式 @自己, 必答) | "poll" (主动轮询) | "broadcast" (广播) | "system"
               用于 EventHandler / DecisionMaker 决定: 邮箱路径必答, 轮询路径 LLM 决定 skip
+
+        投递规则:
+          - agent_id 必须在频道的 enabled_workers 白名单里 (如果有的话)
+          - 白名单为空: 不限制 (向后兼容)
         """
+        # 投递前检查: channel enabled_workers 白名单
+        channel_name = mail_data.get("channel", "")
+        if channel_name:
+            from .files.channel import Channel
+            ch = Channel(self.channels_dir / f"{channel_name}.jsonl", channel_name)
+            if ch.has_restriction() and not ch.is_enabled(agent_id):
+                logger.debug(f"[scanner] skip delivery: {agent_id} not in {channel_name}.enabled_workers")
+                return
+
         mb = self.mailbox_of(agent_id)
         if not mb.path.exists():
             # 目标 agent 不存在, 跳过

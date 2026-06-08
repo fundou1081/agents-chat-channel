@@ -93,6 +93,7 @@ echo "  ✓ workspace + opencode.md"
 
 # =============================================================================
 # 配置频道 (admin=god 是管理员, 发第一条消息)
+# enabled_workers: 只允许 seller-fish 和 buyer-fish 响应 (白名单)
 # =============================================================================
 echo ""
 echo "T=2  配置频道成员 + admin 发第一条消息"
@@ -101,10 +102,17 @@ import sys; sys.path.insert(0, 'src')
 from agents_chat.v2.files.channel import Channel
 
 ch = Channel('$DATA_DIR/channels/fish-market.jsonl', 'fish-market')
-ch.add_admin('god')
-ch.add_member('seller-fish')
-ch.add_member('buyer-fish')
-ch.add_member('admin')
+ch.add_admin('god')              # god 是频道管理员
+ch.add_member('seller-fish')     # 卖方
+ch.add_member('buyer-fish')      # 买方
+ch.add_member('admin')           # 人类 admin
+
+# 白名单: 只有 seller-fish 和 buyer-fish 能收到消息
+# 其他 worker 即使在 members 里, Scanner 也不会投递
+ch.set_enabled_workers(['seller-fish', 'buyer-fish'])
+print('  admin:', ch.list_admins())
+print('  members:', ch.list_members())
+print('  enabled_workers:', ch.list_enabled_workers())
 
 # god (admin) 发第一条消息: 发起讨论
 ch.append(
@@ -112,7 +120,6 @@ ch.append(
     mentions=['seller-fish', 'buyer-fish'],
 )
 print('  god 发起: 今天的鱼价行情怎么样? 开始报价吧')
-print('  members:', ch.list_members())
 "
 
 # =============================================================================

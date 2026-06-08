@@ -64,6 +64,7 @@ class Channel:
             return {
                 "name": self.name, "members": [], "admins": [],
                 "human_admins": [], "admin_types": {},
+                "enabled_workers": [],   # 空=不限制, 有值=只允许这些 worker 收消息
                 "created_by": "", "created_at": "",
             }
         try:
@@ -74,11 +75,13 @@ class Channel:
             data.setdefault("admin_types", {})
             data.setdefault("members", [])
             data.setdefault("admins", [])
+            data.setdefault("enabled_workers", [])  # 新: worker 白名单
             return data
         except (json.JSONDecodeError, OSError):
             return {
                 "name": self.name, "members": [], "admins": [],
                 "human_admins": [], "admin_types": {},
+                "enabled_workers": [],
                 "created_by": "", "created_at": "",
             }
 
@@ -190,6 +193,51 @@ class Channel:
 
     def is_member(self, agent_id: str) -> bool:
         return agent_id in self.list_members()
+
+    # ------------------------------------------------------------------
+    # enabled_workers (Worker 白名单)
+    # ------------------------------------------------------------------
+
+    def add_enabled_worker(self, worker_id: str) -> bool:
+        """加 worker 到白名单. 空白名单=不限制 (向后兼容)."""
+        meta = self._load_meta()
+        workers = meta.setdefault("enabled_workers", [])
+        if worker_id in workers:
+            return False
+        workers.append(worker_id)
+        self._save_meta(meta)
+        return True
+
+    def remove_enabled_worker(self, worker_id: str) -> bool:
+        """从白名单移除 worker."""
+        meta = self._load_meta()
+        workers = meta.get("enabled_workers", [])
+        if worker_id not in workers:
+            return False
+        workers.remove(worker_id)
+        self._save_meta(meta)
+        return True
+
+    def set_enabled_workers(self, worker_ids: list[str]) -> None:
+        """设白名单 (批量覆盖). 传 [] 清空=不限制."""
+        meta = self._load_meta()
+        meta["enabled_workers"] = list(worker_ids)
+        self._save_meta(meta)
+
+    def list_enabled_workers(self) -> list[str]:
+        """返回白名单. 空=不限制."""
+        return list(self._load_meta().get("enabled_workers", []))
+
+    def is_enabled(self, worker_id: str) -> bool:
+        """检查 worker 是否在白名单. 空白名单=允许所有."""
+        workers = self.list_enabled_workers()
+        if not workers:  # 空白名单=不限制
+            return True
+        return worker_id in workers
+
+    def has_restriction(self) -> bool:
+        """白名单是否限制 (非空=有限制)."""
+        return len(self.list_enabled_workers()) > 0
 
     # ------------------------------------------------------------------
     # 写入
