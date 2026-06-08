@@ -32,7 +32,10 @@ class TestWorkspaceDir:
         content = md_path.read_text()
         # 关键内容验证
         assert "qwencode" in content
-        assert "工作规则" in content
+        # 新模板含 5 条铁律 (Claude Code 风格)
+        assert "5 条铁律" in content or "@名字" in content
+        # 新模板含完整工作流
+        assert "完整工作流" in content
         assert "STATUS" in content  # 强调 STATUS 块
 
     def test_md_for_different_cli_names(self, tmp_path):

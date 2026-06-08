@@ -175,26 +175,61 @@ class Agent:
         md_path.write_text(md_content, encoding="utf-8")
 
     def _build_workspace_md(self, md_name: str) -> str:
-        """构造 {cli_name}.md 引导文件内容."""
+        """构造 {cli_name}.md 引导文件内容.
+
+        基于用户分享的 Claude Code AGENTS.md 模板 (图 5, 12):
+          模板格式: 你是 {agent_name}。{role}。你在一个多人协作频道中。
+                    频道：#{channel}，成员：{members}。
+
+        加 5 条铁律 (Claude Code 经验):
+          1. 开头 @名字
+          2. 不确定就 @频道管理员
+          3. 管理员指令立即执行
+          4. 角色扮演中继续演, 不退出
+          5. [STATUS] 简述 | 下一步: xxx (单行格式)
+        """
         ch = self.channel(self.default_channel)
         members = ch.list_members()
         admins = ch.list_admins()
-        return f"""# {self.agent_id} 角色定义 (v2.0)
+        members_str = ", ".join(members) if members else "(无)"
+        return f"""# {self.agent_id} 角色定义 (v2.0) — 模板自动生成
 
-你是 **{self.agent_id}**, 在多 agent 协作网络中工作. 本文件由 Agent 启动时自动生成,
-你可以手动修改, Agent 不会覆盖.
+你是 **{self.agent_id}**。{self.system_prompt or '通用 worker'}。你在一个多人协作频道中。
+频道: #{self.default_channel}, 成员: {members_str}。
+频道管理员: {', '.join(admins) if admins else '(无)'}。
+
+本文件由 Agent 启动时自动生成, 你可以手动修改, Agent 不会覆盖.
+参考 Claude Code AGENTS.md 格式: `templates/system_prompt.md` 自动填充.
 
 ## 能力标签
 
 {', '.join(self.capabilities) or '通用'}
 
-## 角色提示 (system_prompt)
+## ⚠️ 5 条铁律 (频道通信, Claude Code 经验)
 
-{self.system_prompt or '(无)'}
+1. **开头 @名字**: 每一条 reply **必须在开头**指定收信人
+   - 格式: `@名字 你的内容`
+   - 例: `@buyer-fish 80 太贵, 70 卖不卖?`
+   - 例: `@seller-fish 成交!`
+   - **不**写 `@xxx:` 格式 (会混乱 Scanner mention 路由)
 
-## 默认频道成员 ({self.default_channel})
+2. **不确定就 @频道管理员**: 不确定对谁说, 就 `@频道管理员`
+   - 频道管理员在 metadata `admins` 列表里 (这里: {', '.join(admins) if admins else '(无)'})
+   - v2 Scanner 模糊匹配会路由到 admin
 
-{self._format_members(members, admins)}
+3. **管理员指令立即执行**: 频道管理员的指令**立即执行**, 不要先回 "收到/好的"
+   - Scheduler 会处理 admin mention (跟普通 mention 一样)
+   - 你的 reply 应该直接包含答案/动作, 不用 "OK" 前缀
+
+4. **角色扮演中继续演, 不退出**: 在角色扮演场景里, 收到对方台词**继续演**
+   - 例: 讨价还价场景里, buyer 报 70, seller 继续报 80 (不要退出角色)
+   - 你的 prompt 会注入真频道历史 (含其他 agent 的真回复) — 用它来续剧情
+
+5. **末尾 [STATUS] 简述 | 下一步: xxx** (单行格式, **不要**多行 HTML):
+   - 格式: `[STATUS] <一句话> | 下一步: <action>`
+   - 例: `[STATUS] 报价 100 元 | 下一步: 等 buyer 还价`
+   - 多字段: `[STATUS] progress=70 confidence=high | 已完成 | 下一步: 提交`
+   - 缺 STATUS 块 = 你这条回复 Scheduler 看不到进度 (会触发 request_status 重试)
 
 ## 模糊匹配规则 (重要!)
 
@@ -203,7 +238,7 @@ class Agent:
 - prefix: `@sell` -> seller-fish
 - 子串: `@fish` -> seller-fish
 - 多个匹配: 选**最长**的 candidate (更精确)
-- **没匹配**: 邮件不投递, 静默忽略
+- **没匹配**: 邮件不投递, 静默忽略 (返回 None)
 
 **反面例子**: `@bot` 同时是 "robot" 和 "bot-1" 的 prefix, 选更长的 -> "robot"
 
@@ -216,29 +251,20 @@ class Agent:
 - 任务锁: `../locks/task_xxx.lock` (5min TTL, mtime 判超时)
 - 频道元数据: `../channels/{{name}}.jsonl.meta.json` (含 members + admins)
 
-## 工作规则
+## 完整工作流 (5 步)
 
-1. **STATUS 块**: 每条 reply 必须嵌入, Scanner 解析用于调度
-   ```
-   <!--STATUS
-    session_id: <local_sess_id>
-    task_id: <task_id>
-    progress: <0-100>
-    summary: <一句话总结>
-    next_action: <下一步行动>
-    confidence: <low/medium/high>
-   -->
-   ```
-2. **@mention**: reply 里的 `@xxx` 由 Scheduler 提取并投递 mention 邮件
-3. **[TASK] 标记**: 频道消息里的 `[TASK task_xxx]` 会被 Scanner 广播给频道**成员**
-4. **session resume**: 同一 task + topic 多次处理会自动用同一 session (decide_session 决定)
-5. **讨价还价 / 多轮对话**: 用 thread 关联, Scheduler 会路由到原 agent
+1. 收到 mail (mention / task_broadcast) → Scheduler 决定续/新建 session
+2. 构造 prompt (含本文件 + session 上下文 + 频道真历史)
+3. 调 CLI ({self.cli.name}) → reply
+4. **5 条铁律** 写 reply (开头 @名字 + 末尾 [STATUS])
+5. 写频道 + second-route mentions
 
 ## 本文件说明
 
 - 文件名: `{md_name}` (跟 CLI 工具名匹配, e.g. claude.md / opencode.md / qwen.md)
 - CLI ({self.cli.name}) 启动后会自动读本文件作为角色引导
 - 修改本文件不会影响 Agent 行为 (Agent 不读), 但会影响 CLI 行为
+- 模板: 跟 Claude Code AGENTS.md 一致 (`templates/system_prompt.md` 自动填充)
 """
 
     def _format_members(self, members: list[str], admins: list[str]) -> str:
