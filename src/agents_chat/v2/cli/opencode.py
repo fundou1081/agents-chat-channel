@@ -11,6 +11,11 @@ opencode (https://github.com/sst/opencode) 是 terminal AI agent, 支持
 实现: asyncio.create_subprocess_exec 调 opencode 命令, 捕获 stdout (JSONL),
 提取 type="text" 的 part 拼成 output_text.
 
+跨平台 (经验来自 v2.0 跨平台跑):
+  - 用 shutil.which() 找 CLI binary (Windows 下 .cmd / PowerShell wrapper 路径问题)
+  - 路径全用 pathlib.Path (自动 forward slashes on POSIX, backslashes on Windows)
+  - 不假设 shell (subprocess_exec args list, 避免 Windows .cmd 解析问题)
+
 workspace_dir: subprocess 在 workspace_dir 里启动, opencode 启动后会自动读
 ./opencode.md (或 AGENTS.md) 作为角色引导 (per-agent <cli_name>.md 模式).
 """
@@ -19,10 +24,28 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import shutil
 import time
+from pathlib import Path
 from typing import Optional
 
 from .base import CLIResponse, new_session_id
+
+
+def _find_cli(binary: str) -> str:
+    """跨平台找 CLI binary 路径.
+
+    Windows 下 `opencode` 可能是 .cmd / PowerShell wrapper, 需用 shutil.which 找完整路径.
+    找不到抛 FileNotFoundError with helpful message.
+    """
+    found = shutil.which(binary)
+    if found:
+        return found
+    raise FileNotFoundError(
+        f"CLI binary '{binary}' not found in PATH. "
+        f"Install: see https://github.com/sst/opencode for opencode. "
+        f"Or pass full path: OpenCodeCLI(binary='/full/path/to/{binary}')"
+    )
 
 
 class OpenCodeCLI:
@@ -34,7 +57,8 @@ class OpenCodeCLI:
         model: str = "opencode/minimax-m3-free",
         timeout_seconds: int = 300,
     ):
-        self.binary = binary
+        # 用 shutil.which 找完整路径 (避免 Windows 下 .cmd wrapper 问题)
+        self.binary = _find_cli(binary)
         self.model = model
         self.timeout = timeout_seconds
         self.call_count = 0
