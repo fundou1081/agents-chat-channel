@@ -55,18 +55,23 @@ class StateBoard:
     def get(self, task_id: str) -> Optional[dict]:
         with self._lock:
             data = self._read_unlocked()
-            entry = data.get(task_id)
-            return dict(entry) if entry else None
+            # 兼容 {"tasks": {...}} 格式
+            tasks = data.get("tasks", data) if isinstance(data, dict) else {}
+            entry = tasks.get(task_id)
+            return dict(entry) if isinstance(entry, dict) else None
 
     def list_all(self) -> dict[str, dict]:
         with self._lock:
             data = self._read_unlocked()
-            return {k: dict(v) for k, v in data.items()}
+            tasks = data.get("tasks", data) if isinstance(data, dict) else {}
+            return {k: dict(v) for k, v in tasks.items() if isinstance(v, dict)}
 
     def list_by_agent(self, agent_id: str) -> dict[str, dict]:
         with self._lock:
             data = self._read_unlocked()
-            return {k: dict(v) for k, v in data.items() if v.get("agent") == agent_id}
+            # 兼容 {"tasks": {...}} 和直接 {...} 格式
+            tasks = data.get("tasks", data) if isinstance(data, dict) else {}
+            return {k: dict(v) for k, v in tasks.items() if isinstance(v, dict) and v.get("agent") == agent_id}
 
     def list_stale(self, ttl_seconds: int) -> dict[str, dict]:
         """返回所有 heartbeat 超过 ttl 的 task (Scheduler 用)."""
@@ -74,8 +79,11 @@ class StateBoard:
         now = datetime.now(timezone.utc)
         with self._lock:
             data = self._read_unlocked()
+            tasks = data.get("tasks", data) if isinstance(data, dict) else {}
             stale = {}
-            for tid, entry in data.items():
+            for tid, entry in tasks.items():
+                if not isinstance(entry, dict):
+                    continue
                 hb_str = entry.get("heartbeat", "")
                 if not hb_str:
                     stale[tid] = dict(entry)
@@ -118,7 +126,7 @@ class StateBoard:
         }
         with self._lock:
             data = self._read_unlocked()
-            data[task_id] = entry
+            data["tasks"][task_id] = entry
             self._write_unlocked(data)
         return entry
 
@@ -130,9 +138,14 @@ class StateBoard:
         """
         with self._lock:
             data = self._read_unlocked()
-            entry = data.get(task_id)
+            # 确保 tasks 容器存在
+            if "tasks" not in data or not isinstance(data.get("tasks"), dict):
+                data["tasks"] = {}
+            tasks = data["tasks"]
+            
+            entry = tasks.get(task_id)
             if not entry:
-                # 不存在则创建 (允许 Scanner 兜底)
+                # 不存在则创建
                 entry = {
                     "agent": agent_id or "unknown",
                     "session": "",
@@ -142,7 +155,7 @@ class StateBoard:
                     "channel": "",
                     "ref_msg_id": "",
                 }
-                data[task_id] = entry
+                tasks[task_id] = entry
             # 更新可覆盖字段
             for k in ("progress", "summary", "next_action", "confidence"):
                 if k in status and status[k] is not None:
@@ -156,8 +169,9 @@ class StateBoard:
     def touch_heartbeat(self, task_id: str) -> bool:
         with self._lock:
             data = self._read_unlocked()
-            if task_id in data:
-                data[task_id]["heartbeat"] = _now_iso()
+            tasks = data.get("tasks", {})
+            if task_id in tasks:
+                tasks[task_id]["heartbeat"] = _now_iso()
                 self._write_unlocked(data)
                 return True
         return False
@@ -166,8 +180,9 @@ class StateBoard:
         """释放 task (锁超时 / 任务完成 / 重新分配)."""
         with self._lock:
             data = self._read_unlocked()
-            if task_id in data:
-                del data[task_id]
+            tasks = data.get("tasks", {})
+            if task_id in tasks:
+                del tasks[task_id]
                 self._write_unlocked(data)
                 return True
         return False
@@ -176,10 +191,11 @@ class StateBoard:
         """标记 task 完成 (progress=100), 但保留 entry 一段时间供查阅."""
         with self._lock:
             data = self._read_unlocked()
-            if task_id in data:
-                data[task_id]["progress"] = 100
-                data[task_id]["heartbeat"] = _now_iso()
-                data[task_id]["completed_at"] = _now_iso()
+            tasks = data.get("tasks", {})
+            if task_id in tasks:
+                tasks[task_id]["progress"] = 100
+                tasks[task_id]["heartbeat"] = _now_iso()
+                tasks[task_id]["completed_at"] = _now_iso()
                 self._write_unlocked(data)
                 return True
         return False
@@ -190,13 +206,26 @@ class StateBoard:
 
     def _read_unlocked(self) -> dict:
         if not self.path.exists():
-            return {}
+            return {"tasks": {}}
         try:
-            return json.loads(self.path.read_text("utf-8"))
+            data = json.loads(self.path.read_text("utf-8"))
+            # 统一格式: 确保返回 {"tasks": {...}}
+            if "tasks" not in data:
+                # 旧格式: {task_id: entry, ...} → {"tasks": {task_id: entry}}
+                # 跳过非 dict 值 (updated_at 等元字段)
+                tasks = {k: v for k, v in data.items() if isinstance(v, dict)}
+                data = {"tasks": tasks}
+            return data
         except (json.JSONDecodeError, OSError):
-            return {}
+            return {"tasks": {}}
 
     def _write_unlocked(self, data: dict):
+        # 确保统一格式
+        if "tasks" not in data:
+            tasks = {k: v for k, v in data.items() if isinstance(v, dict)}
+            data = {"tasks": tasks, "updated_at": _now_iso()}
+        elif "updated_at" not in data:
+            data["updated_at"] = _now_iso()
         fd, tmp = tempfile.mkstemp(
             dir=str(self.path.parent), prefix=f".{self.path.name}.", suffix=".tmp"
         )

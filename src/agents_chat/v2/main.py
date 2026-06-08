@@ -61,13 +61,46 @@ def cmd_init(args):
 def cmd_run_worker(args):
     data_dir = Path(args.data_dir).resolve()
     agent_id = args.agent_id
-    cli_name = args.cli or "mock"
+    cli_name = args.cli or None
+
+    # 从 workspace/config.json 读取配置
+    mode = "passive"
+    subscriptions = []
+    workspace_dir = None
+    system_prompt = ""
+
+    config_path = data_dir / "workspaces" / agent_id / "config.json"
+    if config_path.exists():
+        try:
+            config = json.loads(config_path.read_text("utf-8"))
+            if not cli_name:
+                cli_name = config.get("cli", "mock")
+            mode = config.get("mode", "passive")
+            subscriptions = config.get("subscriptions", [])
+            role = config.get("role", "")
+        except Exception:
+            pass
+    
+    if not cli_name:
+        cli_name = "mock"
 
     cli_map = {"mock": MockCLI, "qwen": QwenCLI, "opencode": OpenCodeCLI}
     cli_cls = cli_map.get(cli_name, MockCLI)
 
-    print(f"[{agent_id}]启动 worker (cli={cli_name})")
-    agent = Agent(agent_id=agent_id, cli=cli_cls(), data_dir=data_dir)
+    # 读取 role.md 作为 system_prompt
+    ws_dir = data_dir / "workspaces" / agent_id
+    system_prompt = ""
+    role_md = ws_dir / "role.md"
+    if role_md.exists():
+        system_prompt = role_md.read_text("utf-8")
+
+    print(f"[{agent_id}] 启动 worker (cli={cli_name}, mode={mode}, subscriptions={subscriptions})")
+    agent = Agent(
+        agent_id=agent_id, cli=cli_cls(), data_dir=data_dir,
+        mode=mode, subscriptions=subscriptions,
+        workspace_dir=ws_dir,
+        system_prompt=system_prompt,
+    )
     asyncio.run(agent.run())
 
 

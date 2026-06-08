@@ -494,7 +494,8 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
         log_path.parent.mkdir(parents=True, exist_ok=True)
         p = subprocess.Popen(
             [sys.executable, "-m", "agents_chat.v2.main",
-             "run-worker", agent_id, "--data-dir", str(data_dir)],
+             "--data-dir", str(data_dir),
+             "run-worker", agent_id],
             stdout=open(log_path, "a"),
             stderr=subprocess.STDOUT,
         )
