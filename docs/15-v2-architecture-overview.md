@@ -20,9 +20,10 @@
 | **Session** | 1 个 LLM 上下文窗口 (含 topic / progress / next_action) | 跟 Claude Code "session" 同义 |
 | **SessionSnapshot** | Session 的轻量摘要 (Comms/Scanner 调 API 判断时用) | v2.0 新引入, 避免传整个 Session |
 | **Scanner** | 后台进程, 扫频道 JSONL, 投递 mention mail (纯程序, 0 token) | 跟 v1 "Scanner" 类似, 但重写为 PDR 风格 |
-| **Scheduler** | 后台进程, 检查 stale task, 发 request_status 邮件, 锁释放 | v2.0 新引入 (v1 没) |
-| **Agent (容器)** | 1 worker = 4 组件 (Comms + Scheduler + SessionMgr + CLI) 的 Python class | 跟 v1 `Author` 类似, 但瘦身为容器 |
-| **PDR 4 组件** | Perceive (Comms) + Decide (AgentScheduler) + Remember (SessionMgr) + Act (CLI) | v2.0 4 组件架构核心 |
+| **Scheduler** | 全局后台进程, 检查 stale task, 发 request_status 邮件, 锁释放 | `scheduler.py`, v2.0 新引入 (v1 没) |
+| **EventHandler** | Agent 内部决策 pipeline, 听 comms 事件按 7 步处理 (gate / decide / session / build_prompt / cli / gate / write) | `event_handler.py`, 改名前叫 AgentScheduler |
+| **Agent (容器)** | 1 worker = 4 组件 (Comms + EventHandler + SessionMgr + CLI) 的 Python class | 跟 v1 `Author` 类似, 但瘦身为容器 |
+| **PDR 4 组件** | Perceive (Comms) + Decide (EventHandler) + Remember (SessionMgr) + Act (CLI) | v2.0 4 组件架构核心 |
 | **CLI 客户端** | 调外部 LLM 工具 (opencode / qwen / claude) 的适配层 | 跟 "tool adapter" 同义 |
 | **Workspace** | 1 个 worker 的独立工作目录, 含 `<cli_name>.md` 引导 | 跟 Claude Code "workspace" 同义 |
 | **`<cli_name>.md`** | Workspace 里的角色引导文件 (opencode.md / qwen.md / claude.md) | 跟 Claude Code "AGENTS.md" / "CLAUDE.md" 同义 |
@@ -73,7 +74,7 @@
                              │ 事件
                              ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│ AgentScheduler (decide + act)                                    │
+│ EventHandler (decide + act)                                    │
 │   handle_mail(mail):                                              │
 │     1. parse task_id / topic                                      │
 │     2. sessions.decide_session(task_id, topic, channel, snapshot) │
@@ -99,7 +100,7 @@ T=0   god → post 频道 "@sell @buy 模拟讨价还价 3 轮"
       Scanner 投递 mention → seller.mailbox + buyer.mailbox
       ↓
 T=1   [Comms.seller poll]  yield ("mail", god_mail)
-      [Scheduler.seller.handle_mail]
+      [EventHandler.seller.handle_mail]
         ├─ parse topic="模拟讨价还价 3 轮", task_id="task_001"
         ├─ sessions.decide_session → 新建 Session(local_seller_001)
         ├─ _build_prompt: 5 条铁律 + @sell 开头 + 100 元开价 + STATUS 提醒
@@ -111,7 +112,7 @@ T=1   [Comms.seller poll]  yield ("mail", god_mail)
         └─ _second_route: @buyer → buyer.mailbox.append
 
 T=2   [Comms.buyer poll]  yield ("mail", seller_reply)
-      [Scheduler.buyer.handle_mail]
+      [EventHandler.buyer.handle_mail]
         ├─ topic="100 一斤", 续 buyer 自己的 session
         ├─ prompt 含真频道历史 (含 seller 的 100 元)
         ├─ cli.execute → "70 块! 老板"
@@ -121,7 +122,7 @@ T=2   [Comms.buyer poll]  yield ("mail", seller_reply)
         └─ _second_route: @seller
 
 T=3   [Comms.seller poll]  yield ("mail", buyer_reply)
-      [Scheduler.seller.handle_mail]
+      [EventHandler.seller.handle_mail]
         ├─ sessions.decide_session → 命中! 续 Session(local_seller_001)
         ├─ cli.execute(session_id="oc_xxx") → 续 → "80 块卖你"
         ├─ progress=50
@@ -129,7 +130,7 @@ T=3   [Comms.seller poll]  yield ("mail", buyer_reply)
         └─ _second_route: @buyer
 
 T=4   [Comms.buyer poll]  yield ("mail", seller_reply)
-      [Scheduler.buyer.handle_mail]
+      [EventHandler.buyer.handle_mail]
         ├─ 续 Session
         ├─ cli.execute → "成交 80"
         ├─ progress=100 → sessions.update(status="completed")
@@ -155,7 +156,7 @@ T=4   [Comms.buyer poll]  yield ("mail", seller_reply)
 │    poll_my_active_tasks() → 写 StateBoard (upsert)               │
 │    listen() → 读 Channel JSONL (tail)                            │
 │                                                                   │
-│  AgentScheduler (decide)                                         │
+│  EventHandler (decide)                                         │
 │    write_channel_reply() → append Channel JSONL                   │
 │    _second_route() → 写 Mailbox (其他 agent)                     │
 │    sessions.update() → 写 Session JSON (atomic)                   │
@@ -169,7 +170,7 @@ T=4   [Comms.buyer poll]  yield ("mail", seller_reply)
 │    execute() → spawn subprocess / HTTP API                       │
 │    return CLIResponse (含 output_text + new_session_id)          │
 │                                                                   │
-│  Scheduler (global)                                              │
+│  Scheduler (global, stale task)                                              │
 │    poll_stale_tasks() → 读 StateBoard + 锁 mtime                  │
 │    release_lock() → O_EXCL 文件锁原子释放                         │
 └─────────────────────────────────────────────────────────────────┘
@@ -213,7 +214,7 @@ Scanner 路由:
 场景: Windows 跑 v2.0 (或 macOS / Linux)
 
 ┌─────────────────────────────────────────────────────────────────┐
-│ AgentScheduler.handle_mail → CLI.execute()                        │
+│ EventHandler.handle_mail → CLI.execute()                        │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                   │
 │  v2 CLI 抽象 (Protocol):                                          │
@@ -274,7 +275,7 @@ Scanner 路由:
 │   5. 末尾 [STATUS] 简述 | 下一步: xxx (单行格式)                  │
 │      格式: [STATUS] <一句话> | 下一步: <action>                    │
 │      例: [STATUS] 报价 100 元 | 下一步: 等 buyer 还价              │
-│      缺 STATUS 块 → Scheduler 看不到进度                          │
+│      缺 STATUS 块 → Scanner/Scheduler 看不到进度                          │
 └─────────────────────────────────────────────────────────────────┘
 
 CLI 工具 (opencode / qwen / claude) 启动时自动读这个文件作为角色引导.
@@ -322,7 +323,7 @@ v2 优先单行 (LLM 容易生成), fallback 多行 (向后兼容).
 │                                                                    │
 │  ┌─ Agent.seller 进程 (1 worker) ─────────────────────────────┐ │
 │  │  Comms.poll_new_mails() → 邮箱                                │ │
-│  │  Scheduler.handle_mail() → 决策                               │ │
+│  │  EventHandler.handle_mail() → 决策                               │ │
 │  │    sessions.decide_session(snapshot) → 续/新建                │ │
 │  │    cli.execute(session_id, prompt, ws) → 调 LLM                │ │
 │  │    parse_status_block → 更新 sessions                         │ │
@@ -370,7 +371,7 @@ v2 优先单行 (LLM 容易生成), fallback 多行 (向后兼容).
 
 | 原则 | 含义 | v2.0 实现 |
 |------|------|----------|
-| **程序路由, AI 执行** | Scanner 纯程序, AI 只在需要时消费 token | `v2/scanner.py` (Scanner) + `v2/agent_scheduler.py` (Scheduler 调 LLM) |
+| **程序路由, AI 执行** | Scanner 纯程序, AI 只在需要时消费 token | `v2/scanner.py` (Scanner) + `v2/event_handler.py` (EventHandler 调 LLM) |
 | **文件总线, 可调试** | 所有状态 = JSONL/JSON 文件, cat/jq 即可看 | `channels/*.jsonl` + `mailboxes/*.json` + `sessions/*.json` + `locks/*.lock` |
 | **多 agent 协作, 单一频道** | N 个 agent 在 1 频道通过 @mention + STATUS 块互动 | `data_v2/channels/{name}.jsonl` + `Channel` 抽象 |
 
@@ -384,7 +385,7 @@ v2 优先单行 (LLM 容易生成), fallback 多行 (向后兼容).
 | Session | `SessionDB` 内存 + SQLite | **`SessionManager` JSON 持久化 (含 content_summary / progress / next_action)** |
 | 任务认领 | Posts claim (SQL UPDATE) | **O_EXCL 文件锁 + mtime TTL** |
 | 状态 | Monitor events JSONL | **STATUS 注释块 + state_board.json** |
-| 调度 | 嵌入 Agent 内部 | **Scheduler 后台进程** (超时 + 锁释放) |
+| 调度 | 嵌入 Agent 内部 | **Scheduler 后台进程 (全局, stale task + 锁)** (超时 + 锁释放) |
 | 调试 | sqlite3 CLI | **cat / jq** (文件总线) |
 
 ## 3. 4 组件 PDR 架构 (每个 agent = 1 worker)
@@ -400,7 +401,7 @@ v2 优先单行 (LLM 容易生成), fallback 多行 (向后兼容).
 │     - 简单 API 判断 (不调 LLM)                  │
 │     - 输出: (event_type, event_data) 流         │
 │                                                │
-│  ② AgentScheduler  "决策"                       │
+│  ② EventHandler  "决策"                       │
 │     - 听 comms 事件                             │
 │     - 续/新建 session                            │
 │     - 构造 prompt (含真历史)                     │
@@ -558,7 +559,7 @@ class CLI(Protocol):
 | `tests/unit/v2/test_session_manager.py` | 25 |
 | `tests/unit/v2/test_session_snapshot.py` ⭐ 新 (修 1) | 8 |
 | `tests/unit/v2/test_communication.py` | 21 |
-| `tests/unit/v2/test_agent_scheduler.py` | 15 |
+| `tests/unit/v2/test_event_handler.py` | 15 |
 | `tests/unit/v2/test_agent_container.py` | 13 |
 | `tests/unit/v2/test_prompt_injection.py` | 8 |
 | `tests/unit/v2/test_status_single_line.py` | 17 |
@@ -579,7 +580,7 @@ class CLI(Protocol):
 src/agents_chat/v2/
 ├── __init__.py
 ├── agent.py              # 1 worker = 4 组件容器
-├── agent_scheduler.py    # 决策大脑
+├── event_handler.py    # 决策大脑
 ├── communication.py      # 感知 (PDR)
 ├── session_manager.py    # 记忆 (PDR) + SessionSnapshot (修 1)
 ├── status.py             # STATUS 块解析 (单行 + 多行兼容)
@@ -641,7 +642,7 @@ cd6da97  channel members + admin + 模糊匹配 + 讨价还价 e2e
 3995f8a  OpenCodeCLI 用 opencode/minimax-m3-free
 c8aa824  Session + SessionManager (PDR Step 1/4)
 2f0ad0f  CommunicationComponent (PDR Step 2/4)
-7d59395  AgentScheduler (PDR Step 3/4)
+7d59395  EventHandler (PDR Step 3/4)
 0d3a402  Agent 瘦身为 4 组件容器 (PDR Step 4/4)
 34b76e1  4 组件 e2e + CLI 统一 (PDR Step 5/6)
 ed1d6fb  docs/13-pdr-architecture.md

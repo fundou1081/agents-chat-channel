@@ -1,11 +1,11 @@
-"""独立 tests for v2.0 AgentScheduler (用 mock CLI + 真实 SessionManager)."""
+"""独立 tests for v2.0 EventHandler (用 mock CLI + 真实 SessionManager)."""
 import asyncio
 import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock
 
-from agents_chat.v2.agent_scheduler import (
-    AgentScheduler,
+from agents_chat.v2.event_handler import (
+    EventHandler,
     extract_mentions,
     derive_task_id,
 )
@@ -66,7 +66,7 @@ def env(tmp_path):
     workspace = tmp_path / "workspaces" / "agent1"
     workspace.mkdir(parents=True, exist_ok=True)
     cli = MockCLIAlwaysOK(output_text="我 100 元", progress=10)
-    scheduler = AgentScheduler(
+    scheduler = EventHandler(
         comms=comms, sessions=sessions, cli=cli,
         agent_id="agent1", system_prompt="你是 agent1",
         workspace_dir=workspace, default_channel="general",

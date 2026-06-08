@@ -5,7 +5,7 @@
   - SecretLeakGate: 检测 API key / 密码, 默认 sanitize (非 strict)
   - ControlCharsGate: 去除控制字符
   - GateChain: 顺序应用, 任一拒绝立即短路
-  - AgentScheduler 集成: input/output gate 在 handle_mail 里跑通
+  - EventHandler 集成: input/output gate 在 handle_mail 里跑通
 
 目标: ≥25 tests, 全部过.
 """
@@ -302,12 +302,12 @@ class TestGateChain:
 
 
 # =============================================================================
-# AgentScheduler 集成 (用 mock CLI)
+# EventHandler 集成 (用 mock CLI)
 # =============================================================================
 
 
 class TestSchedulerGateIntegration:
-    """测试 AgentScheduler.handle_mail 集成 gates."""
+    """测试 EventHandler.handle_mail 集成 gates."""
 
     @pytest.fixture
     def tmp_data(self, tmp_path):

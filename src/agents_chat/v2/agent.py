@@ -3,14 +3,14 @@ Agent for v2.0 — 1 worker = 4 组件容器 (Perceive-Decide-Remember-Act).
 
 4 组件 (每个 worker 各 1 套):
   - CommunicationComponent: 感知 (主动+被动) + API 判断
-  - AgentScheduler:         决策 (听 comms, 调 sessions + cli, 写频道)
+  - EventHandler:           决策 (听 comms, 调 sessions + cli, 写频道)
   - SessionManager:         记忆 (session_id / topic / content / progress)
   - CLI:                    执行 (opencode / qwen / mock)
 
 容器 (Agent class) 只负责:
   - 组装 4 组件 (传对的文件路径 / workspace)
   - 写 <cli_name>.md 引导 (workspace)
-  - 委托 main loop 到 scheduler
+  - 委托 main loop 到 event_handler
   - 保留 channel() / mailbox_of() 辅助 (向后兼容)
 
 用法 (跟 v1.x 兼容):
@@ -20,11 +20,12 @@ Agent for v2.0 — 1 worker = 4 组件容器 (Perceive-Decide-Remember-Act).
     agent.stop()                       # 停
 
 内部组件访问:
-    agent.comms       # CommunicationComponent
-    agent.sessions    # SessionManager
-    agent.cli         # CLI
-    agent.scheduler   # AgentScheduler
-    agent.mailbox     # Mailbox (this agent's own)
+    agent.comms          # CommunicationComponent
+    agent.sessions       # SessionManager
+    agent.cli            # CLI
+    agent.event_handler  # EventHandler (推荐)
+    agent.scheduler      # EventHandler (向后兼容 alias)
+    agent.mailbox        # Mailbox (this agent's own)
 """
 from __future__ import annotations
 
@@ -33,7 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from .agent_scheduler import AgentScheduler, extract_mentions
+from .event_handler import EventHandler, extract_mentions
 from .cli.base import CLI
 from .communication import CommunicationComponent
 from .files.channel import Channel
@@ -120,8 +121,10 @@ class Agent:
         # 3. 执行: cli (已经是传入的实例)
         # (self.cli 已设)
 
-        # 4. 决策: AgentScheduler
-        self.scheduler = AgentScheduler(
+        # 4. 决策: EventHandler
+        # 内部存 self.event_handler (新名, 准确表达职责)
+        # 外部仍可用 self.scheduler (向后兼容 alias)
+        self.event_handler = EventHandler(
             comms=self.comms,
             sessions=self.sessions,
             cli=self.cli,
@@ -134,6 +137,8 @@ class Agent:
             input_gates=self.input_gates,
             output_gates=self.output_gates,
         )
+        # 向后兼容: 老代码用 agent.scheduler 也可访问
+        self.scheduler = self.event_handler
 
     # ============ 公共 API (向后兼容) ============
 
@@ -142,9 +147,9 @@ class Agent:
         self.comms.stop()
 
     async def run(self):
-        """主循环. 委派给 scheduler."""
-        print(f"[{self.agent_id}] ▶ run (cli={self.cli.name}, components: comms+sessions+cli+scheduler)")
-        await self.scheduler.run()
+        """主循环. 委派给 event_handler."""
+        print(f"[{self.agent_id}] ▶ run (cli={self.cli.name}, components: comms+sessions+cli+event_handler)")
+        await self.event_handler.run()
 
     def channel(self, name: str) -> Channel:
         return Channel(self.channels_dir / f"{name}.jsonl", name)

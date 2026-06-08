@@ -1,7 +1,7 @@
 """
 Gates for v2.0 — Worker 输入/输出过滤.
 
-每个 gate 是独立的 plug-in, 在 AgentScheduler 接到 mail 后 (input)
+每个 gate 是独立的 plug-in, 在 EventHandler 接到 mail 后 (input)
 或 LLM 生成 reply 后 (output) 调用. 默认空 list, 启用后:
   - 任一 gate 拒绝 → 整个 message 被拒绝
   - 拒绝时, GateChain 返回 (False, sanitized_text, reject_reason)
@@ -15,7 +15,7 @@ Gates for v2.0 — Worker 输入/输出过滤.
 
 用法 (在 main.py 启动时):
     from agents_chat.v2.gates import MaxLengthGate, SecretLeakGate
-    scheduler = AgentScheduler(
+    scheduler = EventHandler(
         ...,
         input_gates=[MaxLengthGate(max_chars=4000)],
         output_gates=[SecretLeakGate(), MaxLengthGate(max_chars=8000)],

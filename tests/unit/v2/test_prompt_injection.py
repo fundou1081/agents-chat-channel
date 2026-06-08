@@ -1,8 +1,8 @@
-"""Tests for AgentScheduler._build_prompt 注入真频道历史."""
+"""Tests for EventHandler._build_prompt 注入真频道历史."""
 import pytest
 from pathlib import Path
 
-from agents_chat.v2.agent_scheduler import AgentScheduler
+from agents_chat.v2.event_handler import EventHandler
 from agents_chat.v2.cli.mock import MockCLI
 from agents_chat.v2.communication import CommunicationComponent
 from agents_chat.v2.files.channel import Channel
@@ -26,7 +26,7 @@ def _make_scheduler(tmp_path, channel_msgs=None):
         channels_dir=channels_dir, state_board=state_board,
         lock_dir=lock_dir, default_channel="fish-market",
     )
-    scheduler = AgentScheduler(
+    scheduler = EventHandler(
         comms=comms, sessions=sessions, cli=cli,
         agent_id="agent1", system_prompt="你是 agent1",
         workspace_dir=tmp_path / "ws", default_channel="fish-market",

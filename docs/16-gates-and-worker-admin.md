@@ -107,7 +107,7 @@ r = g.check_input("line1\nline2\ttab\x00null")
 
 ---
 
-## 4. 在 AgentScheduler 启用 Gate
+## 4. 在 EventHandler 启用 Gate
 
 `Agent.__init__` 加两个参数:
 ```python
@@ -160,7 +160,7 @@ Input/output gate 拒绝时:
 - `TestSecretLeakGate`: 10 (openai / anthropic / aws / github / bearer / password / private key / 无 secret / strict / output)
 - `TestControlCharsGate`: 5 (保留空白 / 去 NUL / 去 SOH / 不保留空白 / output)
 - `TestGateChain`: 7 (空 / 单个 / 顺序 pipeline / 短路 deny / direction / len+bool / 跳过缺失 direction)
-- `TestSchedulerGateIntegration`: 3 (input deny / output sanitize / 无 gate 默认行为)
+- `TestEventHandlerGateIntegration`: 3 (input deny / output sanitize / 无 gate 默认行为)
 
 ---
 
@@ -276,7 +276,7 @@ ch.remove_admin("worker_bot", is_worker=True)
 
 ```
 1. feat(gates): 新增 gates.py 模块 (Gate 协议 + GateChain + 3 个 builtin)
-2. feat(scheduler): AgentScheduler 集成 input/output gates
+2. feat(event_handler): EventHandler 集成 input/output gates
 3. feat(agent): Agent 容器透传 gates 参数
 4. feat(channel): Channel.add_admin(agent_id, is_worker) 兼容接口 + human_admins 分离
 5. feat(scanner): _resolve_admin_fallback 改为只投 worker admin

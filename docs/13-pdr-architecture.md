@@ -38,7 +38,7 @@ v2.0 老架构 (`Agent` class, 538 行) 把 5+ 职责塞进 1 个类:
 │  └────────┬─────────────────────────────────┘    │
 │           │ 事件流                                │
 │  ┌────────▼─────────────────────────────────┐    │
-│  │ 2. AgentScheduler - "决策"                │    │
+│  │ 2. EventHandler - "决策"                │    │
 │  │ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  │    │
 │  │  听 comms 事件                              │    │
 │  │  handle_mail:                               │    │
@@ -80,7 +80,7 @@ v2.0 老架构 (`Agent` class, 538 行) 把 5+ 职责塞进 1 个类:
 src/agents_chat/v2/
 ├── session_manager.py     # 组件 3: Session + SessionManager
 ├── communication.py       # 组件 1: CommunicationComponent
-├── agent_scheduler.py     # 组件 2: AgentScheduler
+├── event_handler.py     # 组件 2: EventHandler
 ├── agent.py               # Agent 容器 (组装 4 组件)
 ├── cli/
 │   ├── base.py            # CLI Protocol (execute session_id, prompt, ws)
@@ -96,7 +96,7 @@ src/agents_chat/v2/
 tests/unit/v2/
 ├── test_session_manager.py
 ├── test_communication.py
-├── test_agent_scheduler.py
+├── test_event_handler.py
 ├── test_agent_container.py
 └── (老的 files/scanner/etc.)
 ```
@@ -177,13 +177,13 @@ class CommunicationComponent:
 
 **测试**: 21 个独立 tests (poll 各 API / 过滤 / push / listen loop)
 
-### 3.3 AgentScheduler (决策)
+### 3.3 EventHandler (决策)
 
-**文件**: `v2/agent_scheduler.py`
+**文件**: `v2/event_handler.py`
 **职责**: 听 comms 事件, 决定怎么处理, 调度 sessions + cli
 
 ```python
-class AgentScheduler:
+class EventHandler:
     def __init__(comms, sessions, cli, agent_id, system_prompt, ...)
 
     async def run()
@@ -252,7 +252,7 @@ class Agent:
         self.sessions = SessionManager(...)
         self.comms = CommunicationComponent(...)
         self.cli = cli  # 传入
-        self.scheduler = AgentScheduler(
+        self.event_handler = EventHandler(
             comms=self.comms, sessions=self.sessions, cli=self.cli,
             ...
         )
@@ -262,7 +262,7 @@ class Agent:
 
     async def run()
         # 委派
-        await self.scheduler.run()
+        await self.event_handler.run()
 
     def stop()
         # 委派
@@ -282,7 +282,7 @@ T=1  [Comms.seller 主动 poll]
       comms.is_relevant_mail(mail) → True (mention)
       yield ("mail", mail)
      ↓
-     [Scheduler.seller.handle_mail]
+     [handler.seller.handle_mail]
       sessions.decide_session("task_xxx", "鱼市砍价", "fish-market") →
         没匹配, 新建 Session(local_seller_001, topic="鱼市砍价")
       cli.execute(session_id="", prompt=...) →
@@ -294,7 +294,7 @@ T=1  [Comms.seller 主动 poll]
 T=2  [Comms.buyer 主动 poll] (buyer 醒)
       yield ("mail", buyer_mention)
      ↓
-     [Scheduler.buyer.handle_mail]
+     [handler.buyer.handle_mail]
       sessions.decide_session → 新建 Session(local_buyer_001)
       cli.execute → reply="70 块!", remote_id="oc_yyy"
       sessions.update(progress=20, content_delta="还价 70")
@@ -325,18 +325,18 @@ T=4  buyer 看到 80, 续 Session → reply="成交 80"
 - 调 LLM 时作为 prompt 上下文 (历史)
 
 ### 5.3 CLI 抽象统一
-- 老的 `invoke()` (老 Agent 用) → 新的 `execute()` (新 Scheduler 用)
+- 老的 `invoke()` (老 Agent 用) → 新的 `execute()` (新 EventHandler 用)
 - 老的 `resume_session` 参数 → 新的 `session_id` (跟 session_mgr 字段一致)
 - 3 个 CLI (mock/opencode/qwen) 都改, 8 个 tests 同步
 
 ### 5.4 mention 路由 (跟 v2 老的 3-channel 架构一致)
 - 自由 mention: 任何 @ 提到的 agent 都回 (不抢锁, "讨论"模式)
 - task_broadcast: 抢锁 (单 agent 抢任务)
-- 4 组件架构没改这逻辑, 只搬了实现位置 (Scanner 投 → Comm.poll → Scheduler.handle)
+- 4 组件架构没改这逻辑, 只搬了实现位置 (Scanner 投 → Comm.poll → EventHandler.handle)
 
 ### 5.5 跟 PDR 模式的对应
 - **Perceive** = CommunicationComponent (拉 + 推 + 简单判断)
-- **Decide** = AgentScheduler (听事件, 决定续/新建, 调度)
+- **Decide** = EventHandler (听事件, 决定续/新建, 调度)
 - **Remember** = SessionManager (持久化 session 状态)
 - **Act** = CLI Client (调 LLM 执行)
 
@@ -352,8 +352,8 @@ T=4  buyer 看到 80, 续 Session → reply="成交 80"
 | `agent.trigger_immediate_tick()` | `agent.trigger_immediate_tick()` (委派给 comms.on_new_mail) | ✅ 兼容 |
 | `cli.invoke(prompt, ...)` | `cli.execute(prompt, ...)` | ⚠️ 改了 (统一) |
 | `SessionIndex` | `SessionManager` | ⚠️ 升级 (字段丰富) |
-| `Agent._process_one(mail)` | `Agent.scheduler.handle_mail(mail)` | ⚠️ 拆到 scheduler |
-| `Agent._process_batch(mails)` | `Agent.scheduler` 内部循环 | ⚠️ 移除 |
+| `Agent._process_one(mail)` | `Agent.event_handler.handle_mail(mail)` | ⚠️ 拆到 event_handler |
+| `Agent._process_batch(mails)` | `Agent.event_handler` 内部循环 | ⚠️ 移除 |
 
 老 e2e 脚本 (`e2e_bargain.sh` / `e2e_bargain_opencode.sh` / `e2e_bargain_real.sh`) 通过 CLI 跑, 不直接调 Agent 内部方法, 仍兼容。
 
@@ -363,7 +363,7 @@ T=4  buyer 看到 80, 续 Session → reply="成交 80"
 |------|-------|------|
 | SessionManager | 25 | CRUD / update / list / decide_session / concurrency |
 | Communication | 21 | poll 各 API / 过滤 / push / listen loop |
-| AgentScheduler | 15 | helpers / handle_mail 7 场景 / handle_stale / run loop |
+| EventHandler | 15 | helpers / handle_mail 7 场景 / handle_stale / run loop |
 | Agent 容器 | 13 | init / run / workspace / 4 组件 wired / 兼容 |
 | **总 v2** | **182** | 全部 + 老的 files/scanner/cli 108 |
 
@@ -377,7 +377,7 @@ T=4  buyer 看到 80, 续 Session → reply="成交 80"
 |------|------|------|
 | `v2/session_manager.py` | 220 | Session + SessionManager |
 | `v2/communication.py` | 200 | CommunicationComponent |
-| `v2/agent_scheduler.py` | 370 | AgentScheduler |
+| `v2/event_handler.py` | 370 | EventHandler |
 | `v2/agent.py` | 250 | Agent 容器 (4 组件组装 + 兼容) |
 | `v2/cli/{base,mock,opencode,qwen}.py` | ~100 each | CLI 抽象 |
 | **总 v2 源** | ~1500 | 4 组件 + CLI + 工具 |
@@ -390,7 +390,7 @@ vs 老 Agent: 538 行单体 → 4 组件 × ~250 行 = 平均 250 行, 但**独�
 |------|------|------|------|
 | 1 | SessionManager + tests | 1h | ~30min |
 | 2 | CommunicationComponent + tests | 1.5h | ~30min |
-| 3 | AgentScheduler + tests | 1.5h | ~1h (含 CLI 名字统一) |
+| 3 | EventHandler + tests | 1.5h | ~1h (含 CLI 名字统一) |
 | 4 | Agent 容器 + tests | 30min | ~30min |
 | 5 | e2e (mock) | 1.5h | ~1h |
 | 6 | docs | 30min | - |

@@ -1,21 +1,28 @@
 """
-AgentScheduler for v2.0 — 1 个 agent 的决策大脑.
+EventHandler for v2.0 — 1 个 agent 的事件处理器 (decision pipeline).
 
-职责 (Decide):
-  听 comms 事件, 决定怎么处理:
-    - mail 事件: 续/新建 session, 构造 prompt, 调 CLI, 更新 session, 写频道
+职责 (Decide orchestrator):
+  听 comms 事件, 按 pipeline 处理每种事件:
+    - mail 事件: GATE → DECIDE → SESSION → BUILD_PROMPT → CLI → GATE → WRITE
     - stale_task: 调 LLM 重新生成 STATUS 块 (heartbeat)
     - active_task: 同 mail 流程 (启动时扫到)
 
 输入: comms.listen() 的 (event_type, event_data)
 输出: 调 sessions + cli + channel.write
 
-跟 SessionManager / CLI / Communication 集成:
-  - 拿 comms 事件
-  - 调 sessions.decide_session() 选 session
-  - 调 cli.execute(session_id, prompt, ws) 调 LLM
-  - 调 sessions.update() 更新 progress / next_action
-  - 写 channel + second-route mentions
+为什么叫 EventHandler (不是 Scheduler):
+  - "Scheduler" 容易误解为 "定时间调度", 实际是 "按事件跑 pipeline"
+  - "EventHandler" 准确表达: 接到事件 → 处理事件
+  - 内部不调 LLM (LLM 决策交给 DecisionMaker, LLM 生成交给 CLI)
+  - 内部不存 session (SessionManager 的事)
+  - 内部不感知 channel/mailbox 路由 (Scanner 的事)
+  - 纯 orchestrator: 串联 6 个步骤, 每步失败有 fallback
+
+跟其他 3 组件的关系:
+  - comms (感知): 给我事件
+  - sessions (记忆): 我读/写
+  - cli (执行): 我调
+  - 自身: 决策 pipeline (gate / decide / session / build_prompt / cli / gate / write)
 """
 from __future__ import annotations
 
@@ -82,7 +89,7 @@ def derive_task_id(content: str, ref_msg_id: str = "") -> str:
     return f"task_auto_{h}"
 
 
-class AgentScheduler:
+class EventHandler:
     """1 个 agent 的决策大脑. 听 comms 事件, 决定怎么处理.
 
     跟其他 3 组件的关系:
