@@ -28,3 +28,4 @@ env/
 
 # v1 archived
 archive/
+.sisyphus/

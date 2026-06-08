@@ -5,6 +5,7 @@ from agents_chat.v2.status import (
     Status,
     extract_status_from_message,
     format_status,
+    format_status_block,
     parse_status_block,
 )
 from agents_chat.v2.session_index import SessionIndex
@@ -116,16 +117,26 @@ class TestStatusParse:
         assert s.is_valid()
 
     def test_format_round_trip(self):
+        """单行 format_status 只含 summary + next_action (其它字段不落).
+        多行 format_status_block 才含所有字段. round-trip 各自验证."""
         s = Status(
             session_id="s1", task_id="t1", progress=80,
             summary="doing x", next_action="do y", confidence="high",
         )
+        # 单行: 只含 summary + next_action
         text = format_status(s)
         s2 = parse_status_block(text)
-        assert s2.session_id == s.session_id
-        assert s2.task_id == s.task_id
-        assert s2.progress == s.progress
-        assert s2.confidence == s.confidence
+        assert s2.summary == s.summary
+        assert s2.next_action == s.next_action
+        # session_id / task_id / progress / confidence 单行不含 (LLM 输不出来)
+
+        # 多行: 包含所有字段
+        text2 = format_status_block(s)
+        s3 = parse_status_block(text2)
+        assert s3.session_id == s.session_id
+        assert s3.task_id == s.task_id
+        assert s3.progress == s.progress
+        assert s3.confidence == s.confidence
 
 
 class TestSessionIndex:
