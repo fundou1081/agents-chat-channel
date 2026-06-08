@@ -81,6 +81,8 @@ class Scheduler:
 
     def stop(self):
         self._stop_event.set()
+        if self._run_task and not self._run_task.done():
+            self._run_task.cancel()
 
     async def run(self):
         """主循环."""
@@ -88,19 +90,24 @@ class Scheduler:
             f"[scheduler] ▶ run (stale_ttl={self.stale_ttl}s, "
             f"grace={self.grace_period}s, interval={self.check_interval}s)"
         )
-        while not self._stop_event.is_set():
-            try:
-                await self._check_once()
-            except Exception as e:
-                print(f"[scheduler] ⚠ check error: {e}")
-                traceback.print_exc()
-            try:
-                await asyncio.wait_for(
-                    self._stop_event.wait(), timeout=self.check_interval,
-                )
-            except asyncio.TimeoutError:
-                pass
-        print(f"[scheduler] ⏹ stopped")
+        self._run_task = asyncio.current_task()
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    await self._check_once()
+                except Exception as e:
+                    print(f"[scheduler] ⚠ check error: {e}")
+                    traceback.print_exc()
+                try:
+                    await asyncio.wait_for(
+                        self._stop_event.wait(), timeout=self.check_interval,
+                    )
+                except asyncio.TimeoutError:
+                    pass
+        except asyncio.CancelledError:
+            print("[scheduler] run cancelled")
+        finally:
+            print("[scheduler] ⏹ stopped")
 
     # ------------------------------------------------------------------
     # 核心

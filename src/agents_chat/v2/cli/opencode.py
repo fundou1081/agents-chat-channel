@@ -6,7 +6,7 @@ opencode (https://github.com/sst/opencode) 是 terminal AI agent, 支持
   - `opencode run "prompt" --session <id>` — resume session
   - `opencode run "prompt" --format json` — 输出 JSONL (每行一个 event)
 
-默认 model: `opencode/minimax-m3-free` (opencode Zen 的 free 模型, 不需 key)
+默认 model: `opencode/deepseek-v4-flash-free` (opencode Zen 的 free 模型, 不需 key)
 
 实现: asyncio.create_subprocess_exec 调 opencode 命令, 捕获 stdout (JSONL),
 提取 type="text" 的 part 拼成 output_text.
@@ -54,7 +54,7 @@ class OpenCodeCLI:
     def __init__(
         self,
         binary: str = "opencode",
-        model: str = "opencode/minimax-m3-free",
+        model: str = "opencode/deepseek-v4-flash-free",
         timeout_seconds: int = 300,
     ):
         # 用 shutil.which 找完整路径 (避免 Windows 下 .cmd wrapper 问题)

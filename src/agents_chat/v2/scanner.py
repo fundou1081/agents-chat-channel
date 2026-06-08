@@ -105,6 +105,7 @@ class Scanner:
     ):
         self.data_dir = Path(data_dir)
         self.scan_interval = scan_interval
+        self._run_task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
 
         # 文件 IO
@@ -129,28 +130,34 @@ class Scanner:
 
     def stop(self):
         self._stop_event.set()
+        if self._run_task and not self._run_task.done():
+            self._run_task.cancel()
 
     async def run(self):
         """主循环: 一直跑直到 stop()."""
-        # 初始化缺失频道的 offset
         for ch in self.channel_names:
             self.offsets.setdefault(ch, 0)
         self._save_state()
 
         print(f"[scanner] ▶ run (channels={self.channel_names}, interval={self.scan_interval}s)")
-        while not self._stop_event.is_set():
-            try:
-                await self._scan_once()
-            except Exception as e:
-                print(f"[scanner] ⚠ scan error: {e}")
-                traceback.print_exc()
-            try:
-                await asyncio.wait_for(
-                    self._stop_event.wait(), timeout=self.scan_interval,
-                )
-            except asyncio.TimeoutError:
-                pass
-        print(f"[scanner] ⏹ stopped")
+        self._run_task = asyncio.current_task()
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    await self._scan_once()
+                except Exception as e:
+                    print(f"[scanner] ⚠ scan error: {e}")
+                    traceback.print_exc()
+                try:
+                    await asyncio.wait_for(
+                        self._stop_event.wait(), timeout=self.scan_interval,
+                    )
+                except asyncio.TimeoutError:
+                    pass
+        except asyncio.CancelledError:
+            print("[scanner] run cancelled")
+        finally:
+            print("[scanner] ⏹ stopped")
 
     async def _scan_once(self):
         """扫一次所有频道."""

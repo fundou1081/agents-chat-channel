@@ -150,13 +150,20 @@ class Agent:
     # ============ 公共 API (向后兼容) ============
 
     def stop(self):
-        """停整个 agent. 委托给 comms 唤醒 scheduler 退出."""
+        """停整个 agent: 设 stop 事件 + 取消 run task."""
         self.comms.stop()
+        if self._run_task and not self._run_task.done():
+            self._run_task.cancel()
+            print(f"[{self.agent_id}] task cancel requested")
 
     async def run(self):
         """主循环. 委派给 event_handler."""
         print(f"[{self.agent_id}] ▶ run (cli={self.cli.name}, components: comms+sessions+cli+event_handler)")
-        await self.event_handler.run()
+        self._run_task = asyncio.current_task()
+        try:
+            await self.event_handler.run()
+        except asyncio.CancelledError:
+            print(f"[{self.agent_id}] run cancelled")
 
     def channel(self, name: str) -> Channel:
         return Channel(self.channels_dir / f"{name}.jsonl", name)
