@@ -637,8 +637,12 @@ function startLiveChatRefresh() {
     state.liveChatChannel = state.currentChannel;
   }
   refreshLiveChat();
+  refreshWorkerStatusPanel();  // 首次加载右侧面板
   stopLiveChatRefresh();
-  state.liveChatTimer = setInterval(refreshLiveChat, 2000);
+  state.liveChatTimer = setInterval(() => {
+    refreshLiveChat();
+    refreshWorkerStatusPanel();  // 每次轮询都更新状态
+  }, 2000);
 }
 
 function stopLiveChatRefresh() {
@@ -647,6 +651,139 @@ function stopLiveChatRefresh() {
     state.liveChatTimer = null;
   }
   state.lastMessageId = null;  // 重置以便重新进入时刷新
+}
+
+// ============================
+// 聊天面板右侧: Worker 实时状态
+// ============================
+
+async function refreshWorkerStatusPanel() {
+  const listEl = $('worker-status-list');
+  const metaEl = $('worker-status-meta');
+  if (!listEl) return;
+
+  try {
+    const ags = await api('/api/agents');
+    if (metaEl) metaEl.textContent = `${ags.length} 个`;
+
+    if (ags.length === 0) {
+      listEl.innerHTML = '<div class="empty-state">暂无 Worker</div>';
+      return;
+    }
+
+    // 并发获取每个 worker 的完整状态: PDR + mailbox + active session
+    const statuses = await Promise.all(ags.map(async a => {
+      const result = { agent: a, pdr: null, mails: 0, last_log_line: '' };
+      try {
+        const p = await api(`/api/agents/${a.agent_id}/pdr-status`);
+        result.pdr = p.pdr || p;
+      } catch (e) {}
+      try {
+        const m = await api(`/api/mailboxes/${a.agent_id}`);
+        result.mails = m.count || 0;
+      } catch (e) {}
+      try {
+        const log = await api(`/api/agents/${a.agent_id}/log?tail=10`);
+        const lines = (log.log || '').split('\n').filter(Boolean);
+        result.last_log_line = lines[lines.length - 1] || '';
+      } catch (e) {}
+      return result;
+    }));
+
+    listEl.innerHTML = statuses.map(s => renderWorkerStatusCard(s)).join('');
+  } catch (e) {
+    listEl.innerHTML = `<div class="error">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function deriveStatus(pdr) {
+  // 从 PDR 数据推导状态:
+  //  - processing: 邮箱有未处理 或 有活跃 session
+  //  - waiting: 决策 ready=false 或 等待回应
+  //  - idle: 空闲
+  if (!pdr) return 'unknown';
+  const pending = pdr.perceive?.pending_mails_count || 0;
+  const activeSessions = pdr.remember?.active_sessions_count || 0;
+  const mode = pdr.decide?.mode || '?';
+  const subscriptions = pdr.perceive?.subscriptions || [];
+
+  if (pending > 0 || activeSessions > 0) return 'processing';
+  if (mode === 'proactive' && subscriptions.length > 0) return 'waiting';
+  return 'idle';
+}
+
+function renderWorkerStatusCard(s) {
+  const a = s.agent;
+  const pdr = s.pdr;
+  const status = deriveStatus(pdr);
+  const statusText = {
+    processing: '处理中',
+    waiting: '等待中',
+    idle: '空闲',
+    unknown: '未知',
+  }[status];
+  const cliType = pdr?.act?.cli_type || '?';
+  const model = pdr?.act?.model || '';
+  const mode = pdr?.decide?.mode || '?';
+  const subscriptions = pdr?.perceive?.subscriptions || [];
+  const pending = pdr?.perceive?.pending_mails_count || 0;
+  const lastDecision = pdr?.decide?.last_decision || '';
+  const activeSessions = pdr?.remember?.active_sessions || [];
+  const lastLog = s.last_log_line || '';
+
+  return `
+    <div class="ws-card ${status}" onclick="showWorkerDetail('${escapeHtml(a.agent_id)}')">
+      <div class="ws-card-header">
+        <span class="ws-name">${escapeHtml(a.agent_id)}</span>
+        <span class="ws-status-badge ${status}">● ${statusText}</span>
+      </div>
+      <div class="ws-card-row">
+        <span class="ws-label">⚡ CLI</span>
+        <span class="ws-value">${escapeHtml(cliType)}</span>
+      </div>
+      ${model ? `<div class="ws-card-row">
+        <span class="ws-label">🧠 model</span>
+        <span class="ws-value ws-value-mono">${escapeHtml(model)}</span>
+      </div>` : ''}
+      <div class="ws-card-row">
+        <span class="ws-label">📡 邮箱</span>
+        <span class="ws-value">${pending} 待处理${pending > 0 ? ' 📬' : ''}</span>
+      </div>
+      <div class="ws-card-row">
+        <span class="ws-label">📺 模式</span>
+        <span class="ws-value mode-${mode}">${mode}${subscriptions.length ? ' [' + subscriptions.join(',') + ']' : ''}</span>
+      </div>
+      ${activeSessions.length > 0 ? `
+      <div class="ws-section">
+        <span class="ws-section-title">💭 活跃 Session (${activeSessions.length})</span>
+        ${activeSessions.map(sess => `
+          <div class="ws-session">
+            <div class="ws-session-id">${escapeHtml(sess.session_id || '?')}</div>
+            <div class="ws-session-topic">${escapeHtml(sess.topic || '')}</div>
+            <div class="ws-session-progress">
+              <div class="progress-bar"><div class="progress-fill" style="width:${sess.progress || 0}%"></div></div>
+              <span class="ws-progress-num">${sess.progress || 0}%</span>
+            </div>
+            ${sess.next_action ? `<div class="ws-session-next">→ ${escapeHtml(sess.next_action)}</div>` : ''}
+            ${sess.summary ? `<div class="ws-session-summary">${escapeHtml(sess.summary)}</div>` : ''}
+          </div>
+        `).join('')}
+      </div>
+      ` : ''}
+      ${lastDecision ? `
+      <div class="ws-section">
+        <span class="ws-section-title">🎯 最后决策</span>
+        <div class="ws-decision">${escapeHtml(lastDecision.slice(-150))}</div>
+      </div>
+      ` : ''}
+      ${lastLog ? `
+      <div class="ws-section">
+        <span class="ws-section-title">📄 最新日志</span>
+        <div class="ws-log">${escapeHtml(lastLog.slice(-200))}</div>
+      </div>
+      ` : ''}
+    </div>
+  `;
 }
 
 async function sendLiveMessage() {

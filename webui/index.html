@@ -120,19 +120,32 @@
           </div>
         </div>
         <div class="live-chat-container">
-          <div class="live-chat-messages" id="live-chat-messages">
-            <div class="empty-state">选择顶部频道开始观察</div>
-          </div>
-          <div class="live-chat-input">
-            <div class="input-row">
-              <input type="text" id="live-from" value="god" placeholder="发送者">
-              <span class="msg-meta">ENTER 发送 · SHIFT+ENTER 换行</span>
+          <div class="live-chat-main">
+            <div class="live-chat-messages" id="live-chat-messages">
+              <div class="empty-state">选择顶部频道开始观察</div>
             </div>
-            <div class="input-row">
-              <textarea id="live-content" rows="3" placeholder="消息内容, 使用 @成员名 来提及 (留空则不提及)"></textarea>
-              <button class="btn btn-primary" onclick="sendLiveMessage()">发送</button>
+            <div class="live-chat-input">
+              <div class="input-row">
+                <input type="text" id="live-from" value="god" placeholder="发送者">
+                <span class="msg-meta">ENTER 发送 · SHIFT+ENTER 换行</span>
+              </div>
+              <div class="input-row">
+                <textarea id="live-content" rows="3" placeholder="消息内容, 使用 @成员名 来提及 (留空则不提及)"></textarea>
+                <button class="btn btn-primary" onclick="sendLiveMessage()">发送</button>
+              </div>
             </div>
           </div>
+
+          <!-- 右侧: 所有 Worker 实时状态 -->
+          <aside class="worker-status-panel" id="worker-status-panel">
+            <div class="panel-header">
+              <span>👥 Workers 状态</span>
+              <span class="panel-meta" id="worker-status-meta">加载中...</span>
+            </div>
+            <div class="panel-body" id="worker-status-list">
+              <div class="loading">加载中...</div>
+            </div>
+          </aside>
         </div>
       </section>
 

@@ -2444,3 +2444,193 @@ pre, code {
 .sidebar-help { font-size: 11px; color: var(--text-tertiary); }
 .sidebar-help p { margin: 4px 0; }
 .sidebar-help strong { color: var(--text-secondary); }
+
+/* ==========================================
+   聊天面板右侧: Worker 实时状态
+   ========================================== */
+
+.live-chat-container {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 12px;
+  height: calc(100vh - 160px);
+  min-height: 500px;
+}
+
+.live-chat-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.worker-status-panel {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+}
+.panel-meta {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Worker 状态卡片 (右侧) */
+.ws-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--text-tertiary);
+  border-radius: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ws-card:hover { background: var(--bg-hover); }
+.ws-card.processing { border-left-color: var(--accent); }
+.ws-card.waiting { border-left-color: var(--warning); }
+.ws-card.idle { border-left-color: var(--success); }
+.ws-card.unknown { border-left-color: var(--text-tertiary); }
+
+.ws-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.ws-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+.ws-status-badge {
+  font-size: 10px;
+  padding: 1px 8px;
+  border-radius: 8px;
+  font-weight: 600;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+.ws-status-badge.processing { background: color-mix(in srgb, var(--accent) 30%, transparent); color: var(--accent); }
+.ws-status-badge.waiting { background: color-mix(in srgb, var(--warning) 30%, transparent); color: var(--warning); }
+.ws-status-badge.idle { background: color-mix(in srgb, var(--success) 30%, transparent); color: var(--success); }
+
+.ws-card-row {
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+  margin: 2px 0;
+  align-items: baseline;
+}
+.ws-label {
+  color: var(--text-tertiary);
+  min-width: 60px;
+  flex-shrink: 0;
+}
+.ws-value { color: var(--text); word-break: break-word; }
+.ws-value-mono { font-family: monospace; font-size: 10px; }
+.mode-proactive { color: var(--success); }
+.mode-passive { color: var(--warning); }
+
+.ws-section {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+.ws-section-title {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.ws-session {
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  padding: 4px 6px;
+  margin: 3px 0;
+  font-size: 10px;
+}
+.ws-session-id {
+  font-family: monospace;
+  color: var(--accent);
+  font-size: 10px;
+}
+.ws-session-topic {
+  color: var(--text);
+  margin: 2px 0;
+  word-break: break-word;
+}
+.ws-session-progress {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0;
+}
+.ws-session-progress .progress-bar {
+  flex: 1;
+  height: 4px;
+  background: var(--bg);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.ws-session-progress .progress-fill {
+  height: 100%;
+  background: var(--accent);
+}
+.ws-progress-num {
+  font-size: 9px;
+  color: var(--text-tertiary);
+  min-width: 24px;
+  text-align: right;
+}
+.ws-session-next {
+  color: var(--text-secondary);
+  font-style: italic;
+  margin: 2px 0;
+}
+.ws-session-summary {
+  color: var(--text-tertiary);
+  margin: 2px 0;
+  word-break: break-word;
+}
+
+.ws-decision, .ws-log {
+  background: var(--bg-tertiary);
+  padding: 4px 6px;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 10px;
+  color: var(--text-secondary);
+  word-break: break-all;
+  white-space: pre-wrap;
+  max-height: 80px;
+  overflow-y: auto;
+  margin-top: 2px;
+}
