@@ -432,6 +432,14 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
 
     # ====================== Scheduler ======================
 
+    @app.get("/api/scheduler/status")
+    def scheduler_status():
+        """Scheduler 运行状态: 有 running scheduler 进程 → True."""
+        for p in pm.list_processes(kind="scheduler"):
+            if p.is_running():
+                return {"running": True, "process": p.to_dict()}
+        return {"running": False}
+
     @app.post("/api/scheduler/start")
     def start_scheduler():
         try:
@@ -517,7 +525,9 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
 
     # ====================== Static (WebUI 占位) ======================
 
-    webui_dir = Path(__file__).parent.parent.parent / "webui"
+    # server.py 在 src/agents_chat/v2/server.py, webui/ 在项目根
+    # parent.parent.parent = src/, 再上一层 = 项目根
+    webui_dir = Path(__file__).parent.parent.parent.parent / "webui"
     if webui_dir.exists():
         app.mount("/webui", StaticFiles(directory=str(webui_dir), html=True), name="webui")
 

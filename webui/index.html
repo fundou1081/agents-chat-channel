@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>agents-chat-channel · 控制台</title>
+  <link rel="stylesheet" href="/webui/style.css">
+</head>
+<body>
+  <!-- 顶部状态栏 -->
+  <header class="topbar">
+    <div class="brand">🐟 agents-chat-channel <span class="version">v2.0</span></div>
+    <div class="status-bar">
+      <span id="conn-status" class="conn-status">●</span>
+      <span id="conn-text">连接中...</span>
+      <label class="auto-refresh">
+        <input type="checkbox" id="auto-refresh" checked> 自动刷新
+        <select id="refresh-interval">
+          <option value="2000">2s</option>
+          <option value="5000" selected>5s</option>
+          <option value="10000">10s</option>
+          <option value="30000">30s</option>
+        </select>
+      </label>
+      <button id="refresh-btn" class="btn">↻ 刷新</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <!-- 左侧导航 -->
+    <nav class="sidebar">
+      <ul>
+        <li class="nav-item active" data-view="dashboard">
+          <span class="icon">📊</span> 总览
+        </li>
+        <li class="nav-item" data-view="channels">
+          <span class="icon">💬</span> 频道
+          <span class="badge" id="badge-channels">0</span>
+        </li>
+        <li class="nav-item" data-view="workers">
+          <span class="icon">🤖</span> Workers
+          <span class="badge" id="badge-workers">0</span>
+        </li>
+        <li class="nav-item" data-view="mailboxes">
+          <span class="icon">📥</span> 邮箱
+        </li>
+        <li class="nav-item" data-view="sessions">
+          <span class="icon">💭</span> Sessions
+        </li>
+        <li class="nav-item" data-view="state-board">
+          <span class="icon">📋</span> 任务板
+        </li>
+        <li class="nav-item" data-view="processes">
+          <span class="icon">⚙️</span> 进程
+        </li>
+        <li class="nav-item" data-view="stats">
+          <span class="icon">📈</span> 统计
+        </li>
+      </ul>
+
+      <div class="sidebar-section">
+        <h3>快速操作</h3>
+        <button class="btn btn-primary" onclick="showSendModal()">✉️ 发送消息</button>
+        <button class="btn" onclick="showNewChannelModal()">+ 新建频道</button>
+        <button class="btn" onclick="showNewWorkerModal()">+ 新建 Worker</button>
+      </div>
+    </nav>
+
+    <!-- 主内容区 -->
+    <main class="content">
+      <!-- 总览 -->
+      <section id="view-dashboard" class="view active">
+        <h2>📊 系统总览</h2>
+        <div class="card-grid">
+          <div class="card">
+            <div class="card-label">Workers</div>
+            <div class="card-value" id="stat-agents">-</div>
+            <div class="card-sub" id="stat-agents-sub"></div>
+          </div>
+          <div class="card">
+            <div class="card-label">频道</div>
+            <div class="card-value" id="stat-channels">-</div>
+          </div>
+          <div class="card">
+            <div class="card-label">进程</div>
+            <div class="card-value" id="stat-processes">-</div>
+            <div class="card-sub" id="stat-processes-sub"></div>
+          </div>
+          <div class="card">
+            <div class="card-label">Scanner</div>
+            <div class="card-value" id="stat-scanner">-</div>
+            <button class="btn btn-sm" id="scanner-toggle" onclick="toggleScanner()">启动</button>
+          </div>
+          <div class="card">
+            <div class="card-label">Scheduler</div>
+            <div class="card-value" id="stat-scheduler">-</div>
+            <button class="btn btn-sm" id="scheduler-toggle" onclick="toggleScheduler()">启动</button>
+          </div>
+        </div>
+
+        <h3>运行中的进程</h3>
+        <div id="dashboard-processes"></div>
+
+        <h3>最近活动</h3>
+        <div id="dashboard-activity" class="activity-feed"></div>
+      </section>
+
+      <!-- 频道 -->
+      <section id="view-channels" class="view">
+        <div class="view-header">
+          <h2>💬 频道</h2>
+        </div>
+        <div class="channel-layout">
+          <div class="channel-list" id="channel-list"></div>
+          <div class="channel-detail" id="channel-detail">
+            <div class="empty-state">← 选择一个频道</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Workers -->
+      <section id="view-workers" class="view">
+        <div class="view-header">
+          <h2>🤖 Workers</h2>
+        </div>
+        <div id="workers-list"></div>
+      </section>
+
+      <!-- 邮箱 -->
+      <section id="view-mailboxes" class="view">
+        <div class="view-header">
+          <h2>📥 邮箱</h2>
+        </div>
+        <div class="mailbox-layout">
+          <div class="mailbox-list" id="mailbox-list"></div>
+          <div class="mailbox-detail" id="mailbox-detail">
+            <div class="empty-state">← 选择一个 worker</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Sessions -->
+      <section id="view-sessions" class="view">
+        <div class="view-header">
+          <h2>💭 Sessions</h2>
+        </div>
+        <div class="session-layout">
+          <div class="session-list" id="session-list"></div>
+          <div class="session-detail" id="session-detail">
+            <div class="empty-state">← 选择一个 worker</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 任务板 -->
+      <section id="view-state-board" class="view">
+        <div class="view-header">
+          <h2>📋 任务板</h2>
+        </div>
+        <div id="state-board-list"></div>
+      </section>
+
+      <!-- 进程 -->
+      <section id="view-processes" class="view">
+        <div class="view-header">
+          <h2>⚙️ 进程</h2>
+        </div>
+        <div id="processes-list"></div>
+      </section>
+
+      <!-- 统计 -->
+      <section id="view-stats" class="view">
+        <div class="view-header">
+          <h2>📈 统计</h2>
+        </div>
+        <div id="stats-content"></div>
+      </section>
+    </main>
+  </div>
+
+  <!-- 发送消息 modal -->
+  <div id="send-modal" class="modal hidden">
+    <div class="modal-content">
+      <h3>✉️ 发送消息</h3>
+      <div class="form-row">
+        <label>频道:</label>
+        <select id="send-channel"></select>
+      </div>
+      <div class="form-row">
+        <label>发送者:</label>
+        <input type="text" id="send-from" value="god">
+      </div>
+      <div class="form-row">
+        <label>类型:</label>
+        <select id="send-type">
+          <option value="mention">mention (广播)</option>
+          <option value="task_broadcast">task_broadcast (任务)</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>@提及 (逗号分隔):</label>
+        <input type="text" id="send-mentions" placeholder="seller-fish, buyer-fish">
+      </div>
+      <div class="form-row">
+        <label>内容:</label>
+        <textarea id="send-content" rows="4" placeholder="消息内容..."></textarea>
+      </div>
+      <div class="form-actions">
+        <button class="btn" onclick="hideSendModal()">取消</button>
+        <button class="btn btn-primary" onclick="sendMessage()">发送</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 新建频道 modal -->
+  <div id="new-channel-modal" class="modal hidden">
+    <div class="modal-content">
+      <h3>+ 新建频道</h3>
+      <div class="form-row">
+        <label>频道名:</label>
+        <input type="text" id="new-channel-name" placeholder="my-channel">
+      </div>
+      <div class="form-actions">
+        <button class="btn" onclick="hideNewChannelModal()">取消</button>
+        <button class="btn btn-primary" onclick="createChannel()">创建</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 新建 Worker modal -->
+  <div id="new-worker-modal" class="modal hidden">
+    <div class="modal-content">
+      <h3>+ 新建 Worker</h3>
+      <div class="form-row">
+        <label>Worker ID:</label>
+        <input type="text" id="new-worker-id" placeholder="my-worker">
+      </div>
+      <div class="form-row">
+        <label>CLI 类型:</label>
+        <select id="new-worker-cli">
+          <option value="opencode">opencode</option>
+          <option value="qwen">qwen</option>
+          <option value="mock">mock (测试)</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>角色 (role):</label>
+        <input type="text" id="new-worker-role" placeholder="数据分析师">
+      </div>
+      <div class="form-row">
+        <label>模式:</label>
+        <select id="new-worker-mode">
+          <option value="passive">passive (等 @mention)</option>
+          <option value="proactive">proactive (订阅)</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>订阅频道 (逗号分隔, 可选):</label>
+        <input type="text" id="new-worker-subs" placeholder="general, fish-market">
+      </div>
+      <div class="form-actions">
+        <button class="btn" onclick="hideNewWorkerModal()">取消</button>
+        <button class="btn btn-primary" onclick="createWorker()">创建</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast 通知 -->
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="/webui/app.js"></script>
+</body>
+</html>
