@@ -1,33 +1,22 @@
 # agents-chat-channel
 
-> **v2.0** — Multi-agent runtime with file-bus (JSONL/JSON), pull-mailbox loop, and
-> pure-program Scanner routing. 详见 [docs/11-v2-architecture.md](docs/11-v2-architecture.md).
->
-> **v1.1** (deprecated, archived 2026-06-07) — 独立项目在
-> [`~/my_proj/_deprecated/agents-chat-v1/`](../../_deprecated/agents-chat-v1/).
-> 仍是 74 个回归 tests, 但不再维护.
+> **v2.0** — Multi-agent runtime with file-bus + 4 组件 PDR 架构 (Perceive-Decide-Remember-Act).
+> 详见 [docs/15-v2-architecture-overview.md](docs/15-v2-architecture-overview.md).
 
 ---
 
-# v2.0 (主版本)
+## v2.0 架构
 
-> Multi-agent runtime. Each agent is a standalone process bound to an external
-> CLI (qwen/opencode/mock). Communication via file bus (channels JSONL + per-agent
-> mailboxes JSON + per-task locks). Pure-program Scanner routes messages, no central
-> orchestrator, no LLM in the routing path.
+每个 agent 是独立进程, 4 组件:
 
-## 核心抽象
-
-| 概念 | 含义 | 类比 |
+| 组件 | 职责 | 实现 |
 |------|------|------|
-| **Author** | 持续活着的 agent,有 identity + heartbeat | 员工 / Actor |
-| **Mail** | 异步消息,持久化在 mailbox | Email |
-| **Mailbox** | 每个 author 一个收件箱(SQLite) | 邮箱 |
-| **Session** | 一个 author 内部的多个并行对话 | 脑子里多个线程 |
-| **Heartbeat** | 定时 tick,作者自己醒来处理 | 周期性检查邮件 |
+| **CommunicationComponent** | 感知 (mailbox + 频道轮询) | `src/agents_chat/v2/communication.py` |
+| **EventHandler** | 决策 (passive/proactive 两种模式) | `src/agents_chat/v2/event_handler.py` |
+| **SessionManager** | 记忆 (session 持久化 JSON) | `src/agents_chat/v2/session_manager.py` |
+| **CLI** | 执行 (调外部 LLM: opencode/qwen/mock) | `src/agents_chat/v2/cli/` |
 
-**核心思想**: 没有中央 orchestrator,各 author 自主 tick 拉邮件、决策、行动。
-这跟 AutoGen 的 "Worker 被 push 任务" 完全不同。
+**文件总线**: `data_v2/channels/` + `data_v2/mailboxes/` + `data_v2/sessions/` + `data_v2/locks/`
 
 ## 快速开始
 
@@ -35,48 +24,66 @@
 # 安装
 pip install -e .
 
-# 跑 demo (2 个 author 互相发邮件)
-python -m agents_chat.demo
+# 初始化数据目录
+python -m agents_chat.v2.main init --data-dir ./data_v2
 
-# 启动 Web UI
-python -m agents_chat.main web
-# → http://localhost:7331
+# 跑 e2e 讨价还价 (被动模式, god 控制节奏)
+MAX_ROUNDS=4 TIMEOUT_SECS=240 bash examples/e2e_bargain_real.sh
+
+# 跑 e2e 全自主 (主动模式, agent 自己发起对话)
+MAX_ROUNDS=4 TIMEOUT_SECS=180 bash examples/e2e_autonomous.sh
+
+# 跑单元测试
+.venv/bin/python -m pytest tests/unit/ -q
 ```
 
 ## 项目结构
 
 ```
-src/agents_chat/
-├── models.py          # Mail, Session, Author 数据类
-├── storage/           # SQLite 持久化
-│   ├── mailbox_db.py
-│   └── session_db.py
-├── author/            # Author 运行时
-│   ├── base.py        # Author 基类
-│   ├── heartbeat.py   # 心跳循环
-│   └── think.py       # LLM 决策 (mock)
-├── llm/               # LLM 适配
-│   └── mock.py        # Mock LLM
-├── web/               # FastAPI Web UI
-│   ├── server.py
-│   └── ui/
-├── personas/          # 角色配置 (YAML)
-└── main.py            # CLI 入口
+src/agents_chat/v2/
+├── agent.py              # Agent 容器 (4 组件组装)
+├── event_handler.py      # EventHandler (passive + proactive 模式)
+├── decision.py           # DecisionMaker (decide_session + decide_speak)
+├── communication.py      # CommunicationComponent (感知)
+├── session_manager.py   # SessionManager (记忆)
+├── scanner.py           # Scanner (后台进程, 投递 mail)
+├── scheduler.py         # Scheduler (后台进程, stale task)
+├── gates.py            # Worker Gates (输入/输出过滤)
+├── files/              # 文件总线 (Channel / Mailbox / StateBoard)
+└── cli/                # CLI 适配 (opencode / qwen / mock)
+
+tests/unit/v2/          # 370 tests (DecisionMaker + EventHandler + Scanner + Gates)
+examples/
+├── e2e_bargain_real.sh  # 讨价还价 e2e (passive 模式)
+└── e2e_autonomous.sh    # 全自主 e2e (proactive 模式)
+
+docs/
+├── 15-v2-architecture-overview.md   # 架构总览 (起点)
+├── 13-pdr-architecture.md            # 4 组件 PDR 详细
+├── 18-decision-maker.md              # DecisionMaker 设计
+└── 19-channel-subscription.md        # Channel Subscription (proactive 模式)
 ```
 
-## 路线图
+## 两种运行模式
 
-- [x] Phase 1: 核心抽象 (Author/Mail/Mailbox/Session) + 2 author demo
-- [ ] Phase 2: 接真实 LLM (Claude Code / OpenCode)
-- [ ] Phase 3: DAG 并行调度 (Orchestrator author)
-- [ ] Phase 4: Web UI 完善 (Gantt / 状态机 / 实时)
-- [ ] Phase 5: Slack / Feishu bridge
+| 模式 | 触发方式 | 适用 |
+|------|----------|------|
+| **Passive** (默认) | Scanner 检测 @mention → 投递 mail → DecisionMaker 决定 session | 人机混合 |
+| **Proactive** (v2.0 新) | 订阅频道 + 轮询 → DecisionMaker.decide_speak → CLI 生成 → 写频道 | 全自主 agent 社交 |
 
-## 设计文档
+## 测试
 
-- [docs/01-author-abstraction.md](docs/01-author-abstraction.md) — 为什么是 Author 不是 Worker
-- [docs/02-email-model.md](docs/02-email-model.md) — Email 邮箱模型
-- [docs/03-autogen-comparison.md](docs/03-autogen-comparison.md) — 跟 AutoGen 的对比
+```bash
+# 全部测试
+.venv/bin/python -m pytest tests/unit/ -q
+# → 370 passed
+
+# 只跑 v2 tests
+.venv/bin/python -m pytest tests/unit/v2/ -q
+
+# DecisionMaker tests
+.venv/bin/python -m pytest tests/unit/v2/test_decision_maker.py -v
+```
 
 ## License
 
