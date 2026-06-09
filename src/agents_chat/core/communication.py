@@ -169,7 +169,17 @@ class CommunicationComponent:
           - ("active_task", task):   我持有的 active task (启动时扫一次)
 
         退出: 调 stop() 后下一次循环退出.
+
+        v2.0 改进 (event-driven):
+          - Mailbox.append() 同步 emit "mailbox:<aid>:new" → 进程内 0 延迟唤醒
+          - 跨进程靠 FileBusWatcher 监听文件系统 → emit 同一事件 (< 50ms)
+          - poll_interval 仍是兜底 (应对 watchdog 漏事件, 跨平台差异)
         """
+        from agents_chat.infra.events import get_event_bus, mailbox_event
+
+        event_bus = get_event_bus()
+        my_event = mailbox_event(self.agent_id)
+
         # 启动时: 扫一次已有 active task (让 scheduler 处理 stale / 续)
         for task in self.poll_my_active_tasks():
             yield ("active_task", task)
@@ -183,11 +193,11 @@ class CommunicationComponent:
             for task in self.poll_stale_tasks():
                 yield ("stale_task", task)
 
-            # 2. 被动 wait
-            try:
-                await asyncio.wait_for(
-                    self._new_mail_event.wait(), timeout=self.poll_interval,
-                )
-                self._new_mail_event.clear()
-            except asyncio.TimeoutError:
-                pass
+            # 2. 事件驱动 wait (0 延迟唤醒) + poll_interval 兑底
+            #    wait() 成功: 立即有事件, 返回 True
+            #    wait() False: timeout 到达 (1 周期过后兑底扫一遍)
+            fired = await event_bus.wait(my_event, timeout=self.poll_interval)
+            if fired:
+                # 重要: clear 后下轮 wait() 才会重新 block
+                event_bus.clear(my_event)
+            # 继续循环: 下一轮会重新 poll (有 event 但 mail 可能还在写, 再读一次)

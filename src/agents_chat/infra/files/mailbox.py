@@ -102,6 +102,14 @@ class Mailbox:
             data = self._read_unlocked()
             data.setdefault("pending", []).append(msg)
             self._write_atomic(data)
+
+        # 事件驱动: 进程内立即 emit, 跨进程靠 FileBusWatcher
+        try:
+            from ..events import get_event_bus, mailbox_event
+            get_event_bus().emit(mailbox_event(self.agent_id))
+        except Exception:
+            pass
+
         return msg
 
     # ------------------------------------------------------------------

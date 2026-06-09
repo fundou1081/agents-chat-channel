@@ -185,9 +185,26 @@ class Agent:
         return set(self.subscriptions)
 
     async def run(self):
-        """主循环. 同时处理被动和主动模式."""
+        """主循环. 同时处理被动和主动模式.
+
+        v2.0.1 改进 (event-driven):
+          启动 FileBusWatcher 后台线程, 跨进程写文件也能 0 延迟唤醒.
+          poll_interval 仍是兑底, 应付 watchdog 漏事件 / 跨平台差异.
+        """
         print(f"[{self.agent_id}] ▶ run (subscriptions={list(self.subscriptions)})")
         self._run_task = asyncio.current_task()
+
+        # 启动跨进程文件监听 (watchdog) — 跨进程写 Channel/Mailbox 也能 0 延迟唤醒
+        watcher = None
+        try:
+            from agents_chat.infra.watcher import FileBusWatcher
+            watcher = FileBusWatcher(self.data_dir)
+            watcher.start()
+        except Exception as e:
+            # watchdog 不可用 (未装/跨平台问题) — 降级为仅 EventBus + poll 模式
+            print(f"[{self.agent_id}] FileBusWatcher 启动失败 ({e}), 降级为纯 poll")
+            watcher = None
+
         try:
             # 如果有订阅，启动主动轮询
             if self.subscriptions:
@@ -195,11 +212,15 @@ class Agent:
                     self.event_handler.add_subscription(ch)
                 # 后台运行 proactive 轮询
                 asyncio.create_task(self.event_handler.run_proactive())
-            
+
             # 主循环：监听邮箱事件（被动模式）
             await self.event_handler.run()
         except asyncio.CancelledError:
             print(f"[{self.agent_id}] run cancelled")
+        finally:
+            # 退出时停 watcher
+            if watcher is not None:
+                watcher.stop()
 
     def channel(self, name: str) -> Channel:
         return Channel(self.channels_dir / f"{name}.jsonl", name)

@@ -6,7 +6,7 @@
 > 4 组件 PDR 架构 (Perceive-Decide-Remember-Act) · 文件总线 · FastAPI + WebUI 控制台 · 23 个 CLI 适配 (opencode/qwen/mock)
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-307%20passed-brightgreen.svg)](tests/unit/runtime/)
+[![Tests](https://img.shields.io/badge/tests-334%20passed-brightgreen.svg)](tests/unit/runtime/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
 [![Architecture: PDR](https://img.shields.io/badge/architecture-PDR-orange.svg)](docs/15-v2-architecture-overview.md)
 
@@ -222,7 +222,7 @@ agents-chat-channel/
 ```bash
 # 全部测试
 .venv/bin/python -m pytest tests/unit/ -q
-# → 307 passed, 1 warning in 8.71s
+# → 334 passed, 1 warning in 13.46s
 
 # 只跑 runtime tests
 .venv/bin/python -m pytest tests/unit/runtime/ -q
@@ -242,19 +242,21 @@ agents-chat-channel/
 3. [docs/18-decision-maker.md](docs/18-decision-maker.md) — DecisionMaker 设计
 4. [docs/19-channel-subscription.md](docs/19-channel-subscription.md) — Channel Subscription (proactive 模式)
 5. [docs/17-server-api.md](docs/17-server-api.md) — Server API 完整参考
+6. [docs/21-event-driven-bus.md](docs/21-event-driven-bus.md) — 事件驱动总线 (EventBus + watchdog)
 
 ---
 
 ## 🌟 关键特性
 
 - **🧩 PDR 架构** — Perceive-Decide-Remember 4 组件清晰分离, 业务逻辑 + I/O 适配分层
+- **⚡ Event-Driven Bus** — 进程内 `asyncio.Event` + 跨进程 `watchdog` 监听, 0 延迟唤醒 (进程内 0.2μs, 跨进程 < 50ms), 替代 1s 轮询 — 详见 [docs/21-event-driven-bus.md](docs/21-event-driven-bus.md)
 - **📁 文件总线** — 全部状态在文件系统, 没有数据库, 易调试 / 易回滚 / 易分布式
 - **🔄 两种模式** — Passive (god 控制) + Proactive (agent 自主), 同一套 API
 - **🔌 3 个 CLI 适配** — Mock (测试) + OpenCode (本地 LLM) + Qwen (云端), 切换无侵入
 - **🌐 FastAPI + WebUI** — 实时监控面板, 6 个视图覆盖所有 team 协作场景
 - **🛡️ Worker Gates** — 输入/输出 Gate 链 (长度限制 / 密钥过滤 / 等等)
 - **📊 StateBoard** — 跨频道任务跟踪, 任务认领用文件锁
-- **🧪 307 测试** — 单元测试覆盖核心, e2e 跑真实 LLM
+- **🧪 334 测试** — 单元测试覆盖核心 (含 27 个 event-driven 测试), e2e 跑真实 LLM
 
 ---
 

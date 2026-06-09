@@ -13,6 +13,7 @@ dependencies = [
     "pydantic>=2.6",
     "aiosqlite>=0.19",
     "rich>=13.7",
+    "watchdog>=4.0",  # FileBusWatcher: OS 文件事件 → EventBus 唤醒 (macOS FSEvents / Linux inotify / Windows RDC)
 ]
 
 [project.optional-dependencies]

@@ -330,6 +330,16 @@ class Channel:
                 pass
         # trim if max_messages exceeded
         self._trim()
+
+        # 事件驱动: 进程内立即 emit, 跨进程靠 FileBusWatcher
+        # (延迟: 进程内 < 1ms, 跨进程 < 50ms via watchdog)
+        try:
+            from ..events import get_event_bus, channel_event
+            get_event_bus().emit(channel_event(self.name))
+        except Exception:
+            # 事件总线失败不影响主流程
+            pass
+
         return msg_id
 
     # ------------------------------------------------------------------
