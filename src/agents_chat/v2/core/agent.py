@@ -33,15 +33,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from .event_handler import EventHandler, extract_mentions
-from .cli.base import CLI
-from .communication import CommunicationComponent
-from .decision import DecisionConfig, DecisionMaker
-from .files.channel import Channel
-from .files.mailbox import Mailbox
-from .gates import Gate
-from .session_manager import SessionManager
-from .state_board import StateBoard
+from ..core.event_handler import EventHandler, extract_mentions
+from ..infra.cli.base import CLI
+from ..core.communication import CommunicationComponent
+from ..core.decision import DecisionConfig, DecisionMaker
+from ..infra.files.channel import Channel
+from ..infra.files.mailbox import Mailbox
+from ..infra.gates import Gate
+from ..core.session_manager import SessionManager
+from ..infra.state_board import StateBoard
 
 
 # 重新导出 (向后兼容: scanner 等模块从 agent 导入 extract_mentions)

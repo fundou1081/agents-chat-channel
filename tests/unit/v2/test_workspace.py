@@ -3,11 +3,11 @@ import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from agents_chat.v2.agent import Agent
-from agents_chat.v2.cli.mock import MockCLI
-from agents_chat.v2.cli.opencode import OpenCodeCLI
-from agents_chat.v2.cli.qwen import QwenCLI
-from agents_chat.v2.cli.base import CLIResponse
+from agents_chat.v2.core.agent import Agent
+from agents_chat.v2.infra.cli import MockCLI
+from agents_chat.v2.infra.cli import OpenCodeCLI
+from agents_chat.v2.infra.cli import QwenCLI
+from agents_chat.v2.infra.cli import CLIResponse
 
 
 class TestWorkspaceDir:

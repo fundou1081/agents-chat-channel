@@ -27,7 +27,7 @@ import json
 import pytest
 from unittest.mock import AsyncMock
 
-from agents_chat.v2.decision import (
+from agents_chat.v2.core.decision import (
     Decision,
     DecisionConfig,
     DecisionMaker,
@@ -312,9 +312,9 @@ class TestEventHandlerIntegration:
     @pytest.fixture
     def env(self, tmp_path):
         """env: 临时 data_dir + mock CLI + 预设 sessions."""
-        from agents_chat.v2.agent import Agent
-        from agents_chat.v2.cli.mock import MockCLI
-        from agents_chat.v2.session_manager import SessionManager
+        from agents_chat.v2.core.agent import Agent
+        from agents_chat.v2.infra.cli import MockCLI
+        from agents_chat.v2.core.session_manager import SessionManager
         data_dir = tmp_path / "data"
         for sub in ["channels", "mailboxes", "sessions", "locks", "workspaces"]:
             (data_dir / sub).mkdir(parents=True)

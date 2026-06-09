@@ -4,10 +4,10 @@ import pytest
 import time
 from pathlib import Path
 
-from agents_chat.v2.communication import CommunicationComponent
-from agents_chat.v2.files.channel import Channel
-from agents_chat.v2.files.mailbox import Mailbox
-from agents_chat.v2.state_board import StateBoard
+from agents_chat.v2.core.communication import CommunicationComponent
+from agents_chat.v2.infra.files import Channel
+from agents_chat.v2.infra.files import Mailbox
+from agents_chat.v2.infra.state_board import StateBoard
 
 
 @pytest.fixture

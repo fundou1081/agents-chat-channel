@@ -106,7 +106,7 @@ echo ""
 echo "T=2  配置 fish-market 频道成员"
 $VENV -c "
 import sys; sys.path.insert(0, 'src')
-from agents_chat.v2.files.channel import Channel
+from agents_chat.v2.infra.files import Channel
 ch = Channel('$DATA_DIR/channels/fish-market.jsonl', 'fish-market')
 ch.add_admin('god')              # god 是频道管理员
 ch.add_member('seller-fish')
@@ -130,11 +130,11 @@ TIMEOUT_SECS_VAL=$TIMEOUT_SECS
 $VENV -c "
 import asyncio, sys, time, signal
 sys.path.insert(0, 'src')
-from agents_chat.v2.agent import Agent
+from agents_chat.v2.core.agent import Agent
 from agents_chat.v2.scanner import Scanner
 from agents_chat.v2.scheduler import Scheduler
-from agents_chat.v2.cli.opencode import OpenCodeCLI
-from agents_chat.v2.files.mailbox import Mailbox
+from agents_chat.v2.infra.cli import OpenCodeCLI
+from agents_chat.v2.infra.files import Mailbox
 from pathlib import Path
 
 DATA_DIR = Path('$DATA_DIR')

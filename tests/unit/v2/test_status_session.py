@@ -4,7 +4,7 @@
 """
 import pytest
 
-from agents_chat.v2.status import (
+from agents_chat.v2.core.status import (
     Status,
     extract_status_from_message,
     format_status,

@@ -37,10 +37,10 @@ import logging
 from pathlib import Path
 from typing import Optional, Type
 
-from .cli.base import CLI, CLIResponse
-from .cli.mock import MockCLI
-from .cli.opencode import OpenCodeCLI
-from .cli.qwen import QwenCLI
+from ..infra.cli.base import CLI, CLIResponse
+from ..infra.cli.mock import MockCLI
+from ..infra.cli.opencode import OpenCodeCLI
+from ..infra.cli.qwen import QwenCLI
 
 logger = logging.getLogger(__name__)
 
@@ -241,7 +241,7 @@ class WorkerFactory:
         # 构造 DecisionMaker config
         dm_config = None
         if decision_config:
-            from .decision import DecisionConfig
+            from ..core.decision import DecisionConfig
             dm_config = DecisionConfig(
                 api_key=decision_config.get("api_key", ""),
                 model=decision_config.get("model", ""),
@@ -251,7 +251,7 @@ class WorkerFactory:
             )
 
         # 构造 Agent (Worker)
-        from .agent import Agent
+        from ..core.agent import Agent
 
         return Agent(
             agent_id=agent_id,

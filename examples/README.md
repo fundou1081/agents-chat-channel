@@ -23,11 +23,13 @@ MAX_ROUNDS=4 TIMEOUT_SECS=180 bash examples/e2e_autonomous.sh
 
 ## 归档 (archive/)
 
-| 目录/文件 | 内容 |
-|-----------|------|
-| `archive/data_v1/` | 旧 v1.x SQLite DBs (bulletins/mailbox/sessions.db) |
-| `archive/memory/` | agent 开发期内存文件 |
-| `archive/bulletin_db.py.archived-2026-06-06` | 旧存档 |
+详见 `archive/README.md`. 当前只保留:
+
+| 文件 | 内容 |
+|------|------|
+| `archive/bulletin_db.py.archived-2026-06-06` | v1.x 退役的 bulletin SQLite 存储层 (供对照 evolution) |
+
+(2026-06-09 已清理: `webui_plans/` 23 个过期规划 + `data_v1/` 4 个 v1 DB + `memory/` 一次性工作日志)
 
 ## 旧脚本 (已删除)
 

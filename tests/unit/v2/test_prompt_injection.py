@@ -2,13 +2,13 @@
 import pytest
 from pathlib import Path
 
-from agents_chat.v2.event_handler import EventHandler
-from agents_chat.v2.cli.mock import MockCLI
-from agents_chat.v2.communication import CommunicationComponent
-from agents_chat.v2.files.channel import Channel
-from agents_chat.v2.files.mailbox import Mailbox
-from agents_chat.v2.session_manager import SessionManager
-from agents_chat.v2.state_board import StateBoard
+from agents_chat.v2.core.event_handler import EventHandler
+from agents_chat.v2.infra.cli import MockCLI
+from agents_chat.v2.core.communication import CommunicationComponent
+from agents_chat.v2.infra.files import Channel
+from agents_chat.v2.infra.files import Mailbox
+from agents_chat.v2.core.session_manager import SessionManager
+from agents_chat.v2.infra.state_board import StateBoard
 
 
 def _make_scheduler(tmp_path, channel_msgs=None):

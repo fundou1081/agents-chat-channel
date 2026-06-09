@@ -67,7 +67,7 @@ echo ""
 echo "T=2  配置频道成员 + admin 发第一条消息"
 $VENV -c "
 import sys; sys.path.insert(0, 'src')
-from agents_chat.v2.files.channel import Channel
+from agents_chat.v2.infra.files import Channel
 
 ch = Channel('$DATA_DIR/channels/fish-market.jsonl', 'fish-market')
 ch.add_admin('god')              # god 是频道管理员
@@ -102,9 +102,8 @@ TIMEOUT_SECS_VAL=$TIMEOUT_SECS
 $VENV -c "
 import asyncio, sys, time
 sys.path.insert(0, 'src')
-from agents_chat.v2.scheduler import Scheduler
-from agents_chat.v2.worker_factory import WorkerFactory
-from agents_chat.v2.files.mailbox import Mailbox
+from agents_chat.v2.infra.worker_factory import WorkerFactory
+from agents_chat.v2.infra.files import Mailbox
 from pathlib import Path
 
 DATA_DIR = Path('$DATA_DIR')
@@ -181,8 +180,6 @@ workers = WorkerFactory.create_all(
 agent_seller = workers['seller-fish']
 agent_buyer = workers['buyer-fish']
 
-scheduler = Scheduler(data_dir=DATA_DIR, stale_ttl=60, grace_period=30, check_interval=15)
-
 start_time = time.time()
 _run_tasks = []
 
@@ -198,7 +195,6 @@ async def guard_task():
                     t.cancel()
             import subprocess
             subprocess.run(['pkill', '-9', '-f', 'opencode'], capture_output=True)
-            scheduler.stop()
             agent_seller.stop(); agent_buyer.stop()
             break
 
@@ -207,7 +203,6 @@ async def main():
     _run_tasks = [
         asyncio.create_task(agent_seller.run()),
         asyncio.create_task(agent_buyer.run()),
-        asyncio.create_task(scheduler.run()),
         asyncio.create_task(guard_task()),
     ]
     print(f'[run-all] started: proactive mode, subscriptions=[fish-market], TIMEOUT={TIMEOUT_SECS}s')
@@ -218,7 +213,6 @@ async def main():
         for t in _run_tasks:
             if not t.done():
                 t.cancel()
-        scheduler.stop()
         agent_seller.stop(); agent_buyer.stop()
     except asyncio.CancelledError:
         print('[run-all] CancelledError')
@@ -276,7 +270,7 @@ echo "=== 发言统计 ==="
 $VENV -c "
 import json, sys
 sys.path.insert(0, 'src')
-from agents_chat.v2.files.channel import Channel
+from agents_chat.v2.infra.files import Channel
 ch = Channel('$DATA_DIR/channels/fish-market.jsonl', 'fish-market')
 msgs = ch.tail(100)
 counts = {}

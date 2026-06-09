@@ -4,9 +4,9 @@ import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock
 
-from agents_chat.v2.agent import Agent
-from agents_chat.v2.cli.base import CLIResponse
-from agents_chat.v2.cli.mock import MockCLI
+from agents_chat.v2.core.agent import Agent
+from agents_chat.v2.infra.cli import CLIResponse
+from agents_chat.v2.infra.cli import MockCLI
 
 
 class MockCLIAlwaysOK:
@@ -168,7 +168,7 @@ class TestAgentWorkspace:
         a1 = Agent(agent_id="a1", cli=MockCLI(), data_dir=tmp_path)
         assert (a1.workspace_dir / "mock.md").exists()
         # 不同 CLI -> 不同 MD 文件名
-        from agents_chat.v2.cli.opencode import OpenCodeCLI
+        from agents_chat.v2.infra.cli import OpenCodeCLI
         a2 = Agent(agent_id="a2", cli=OpenCodeCLI(), data_dir=tmp_path)
         assert (a2.workspace_dir / "opencode.md").exists()
 

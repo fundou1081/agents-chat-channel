@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../..", "src"))
 
-from agents_chat.v2.worker_factory import (
+from agents_chat.v2.infra.worker_factory import (
     DEFAULT_WORKER_PROMPT_TEMPLATE,
     _init_workspace,
 )

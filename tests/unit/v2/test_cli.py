@@ -1,8 +1,8 @@
 """Unit tests for v2.0 CLI (base + mock + qwen)."""
 import pytest
 
-from agents_chat.v2.cli.base import CLIResponse, new_session_id
-from agents_chat.v2.cli.mock import MockCLI
+from agents_chat.v2.infra.cli import CLIResponse, new_session_id
+from agents_chat.v2.infra.cli import MockCLI
 
 
 class TestCLIResponse:

@@ -6,7 +6,7 @@ import sys, os, tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../..", "src"))
 
-from agents_chat.v2.files.channel import Channel
+from agents_chat.v2.infra.files import Channel
 
 
 class TestChannelEnabledWorkers:

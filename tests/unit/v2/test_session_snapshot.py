@@ -1,7 +1,7 @@
 """Tests for SessionSnapshot + decide_session 接受 session_snapshot 上下文."""
 import pytest
 
-from agents_chat.v2.session_manager import Session, SessionManager, SessionSnapshot
+from agents_chat.v2.core.session_manager import Session, SessionManager, SessionSnapshot
 
 
 class TestSessionSnapshot:
@@ -93,7 +93,7 @@ class TestDecideSessionWithSnapshot:
 
     def test_explicit_snapshot_param(self, tmp_path):
         """显式传 SessionSnapshot 也能用."""
-        from agents_chat.v2.session_manager import SessionSnapshot
+        from agents_chat.v2.core.session_manager import SessionSnapshot
         sm = SessionManager(tmp_path / "s.json", "a")
         s = sm.create(topic="鱼市", channel="fish-market", task_id="t_old")
         sm.update(s.session_id, progress=100)

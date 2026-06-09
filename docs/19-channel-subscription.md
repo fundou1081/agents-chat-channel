@@ -148,16 +148,16 @@ class Agent:
 
 | 文件 | 内容 |
 |------|------|
-| `src/agents_chat/v2/proactive_handler.py` | ProactiveEventHandler (主动模式核心) |
-| `src/agents_chat/v2/proactive_decision.py` | ProactiveDecision + ProactiveDecisionMaker |
-| `tests/unit/v2/test_proactive_handler.py` | 主动模式测试 |
+| `src/agents_chat/v2/core/event_handler.py` | EventHandler (passive + proactive 模式都内含) |
+| `src/agents_chat/v2/core/decision.py` | DecisionMaker (含 `decide_speak` 主动模式逻辑) |
+| `tests/unit/v2/test_event_handler.py` | 主动模式测试 |
 | `examples/e2e_autonomous.sh` | 无 god 的自主 e2e 脚本 |
 
 ### 3.2 改动文件
 
 | 文件 | 改动 |
 |------|------|
-| `event_handler.py` | 加 `subscriptions`, `run_proactive()` 方法 |
+| `src/agents_chat/v2/core/event_handler.py` | 加 `subscriptions`, `run_proactive()` 方法 |
 | `agent.py` | 加 `subscriptions`, `mode` 参数 |
 | `decision.py` | 加 `ProactiveDecision` + `ProactiveDecisionMaker` |
 | `files/channel.py` | 加 `read_new(from_offset)` 方法 |

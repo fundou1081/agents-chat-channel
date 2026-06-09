@@ -2,7 +2,7 @@
 import time
 import pytest
 
-from agents_chat.v2.state_board import StateBoard
+from agents_chat.v2.infra.state_board import StateBoard
 
 
 class TestStateBoard:

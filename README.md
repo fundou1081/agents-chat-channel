@@ -7,14 +7,15 @@
 
 ## v2.0 架构
 
-每个 agent 是独立进程, 4 组件:
+每个 agent 是独立进程, 4 组件 (PDR 核心):
 
 | 组件 | 职责 | 实现 |
 |------|------|------|
-| **CommunicationComponent** | 感知 (mailbox + 频道轮询) | `src/agents_chat/v2/communication.py` |
-| **EventHandler** | 决策 (passive/proactive 两种模式) | `src/agents_chat/v2/event_handler.py` |
-| **SessionManager** | 记忆 (session 持久化 JSON) | `src/agents_chat/v2/session_manager.py` |
-| **CLI** | 执行 (调外部 LLM: opencode/qwen/mock) | `src/agents_chat/v2/cli/` |
+| **CommunicationComponent** | Perceive (mailbox + 频道轮询) | `src/agents_chat/v2/core/communication.py` |
+| **EventHandler** | Decide 触发 (passive + proactive) | `src/agents_chat/v2/core/event_handler.py` |
+| **DecisionMaker** | Decide 逻辑 (decide_session + decide_speak) | `src/agents_chat/v2/core/decision.py` |
+| **SessionManager** | Remember (session 持久化 JSON) | `src/agents_chat/v2/core/session_manager.py` |
+| **CLI** | 执行 (调外部 LLM: opencode/qwen/mock) | `src/agents_chat/v2/infra/cli/` |
 
 **文件总线**: `data_v2/channels/` + `data_v2/mailboxes/` + `data_v2/sessions/` + `data_v2/locks/`
 
@@ -60,29 +61,46 @@ MAX_ROUNDS=4 TIMEOUT_SECS=180 bash examples/e2e_autonomous.sh
 ## 项目结构
 
 ```
-src/agents_chat/v2/
-├── agent.py              # Agent 容器 (4 组件组装)
-├── event_handler.py      # EventHandler (passive + proactive 模式)
-├── decision.py           # DecisionMaker (decide_session + decide_speak)
-├── communication.py      # CommunicationComponent (感知)
-├── session_manager.py   # SessionManager (记忆)
-├── scanner.py           # Scanner (后台进程, 投递 mail)
-├── scheduler.py         # Scheduler (后台进程, stale task)
-├── gates.py            # Worker Gates (输入/输出过滤)
-├── files/              # 文件总线 (Channel / Mailbox / StateBoard)
-└── cli/                # CLI 适配 (opencode / qwen / mock)
-
-tests/unit/v2/          # 370 tests (DecisionMaker + EventHandler + Scanner + Gates)
-examples/
-├── e2e_bargain_real.sh  # 讨价还价 e2e (passive 模式)
-└── e2e_autonomous.sh    # 全自主 e2e (proactive 模式)
-
-docs/
-├── 15-v2-architecture-overview.md   # 架构总览 (起点)
-├── 13-pdr-architecture.md            # 4 组件 PDR 详细
-├── 18-decision-maker.md              # DecisionMaker 设计
-└── 19-channel-subscription.md        # Channel Subscription (proactive 模式)
+agents-chat-channel/
+├── src/agents_chat/v2/
+│   ├── core/                      # PDR 核心 (业务逻辑)
+│   │   ├── agent.py               # Agent 容器 (4 组件组装)
+│   │   ├── communication.py       # CommunicationComponent (Perceive)
+│   │   ├── event_handler.py       # EventHandler (Decide 触发, passive+proactive)
+│   │   ├── decision.py            # DecisionMaker (Decide 逻辑)
+│   │   ├── session_manager.py     # SessionManager (Remember)
+│   │   └── status.py              # status command 解析
+│   ├── infra/                     # 基础设施 (I/O + 适配器)
+│   │   ├── files/                 # 文件总线 (channel / mailbox / lock)
+│   │   ├── cli/                   # CLI 适配 (opencode / qwen / mock)
+│   │   ├── gates.py               # Worker Gates (输入/输出过滤)
+│   │   ├── state_board.py         # 全局状态板
+│   │   ├── worker_factory.py      # Worker 工厂
+│   │   ├── main.py                # CLI 入口 (init/run-worker/post/...)
+│   │   └── server.py              # FastAPI HTTP server
+│   ├── webui/                     # WebUI 静态资源 (v2.0 控制台)
+│   │   ├── index.html
+│   │   ├── app.js
+│   │   └── style.css
+│   ├── main.py                    # Shim: `python -m agents_chat.v2.main` 兼容
+│   ├── server.py                  # Shim: `python -m agents_chat.v2.server` 兼容
+│   └── __init__.py                # 公共 API re-export
+├── tests/unit/                    # 307 单元测试
+│   └── v2/                        # (按 src/agents_chat/v2/ 结构对应)
+├── examples/
+│   ├── e2e_bargain_real.sh        # 讨价还价 e2e (passive 模式)
+│   ├── e2e_bargain_new.sh         # 讨价还价 e2e (新)
+│   └── e2e_autonomous.sh          # 全自主 e2e (proactive 模式)
+├── docs/                          # 架构设计文档 (01-20)
+├── archive/                       # 旧版存档 (v1 + 接手人计划)
+├── data_v2/                       # 运行时数据 (gitignored)
+└── pyproject.toml
 ```
+
+**重要约定**:
+- 所有 agent 进程都走 `infra/main.py:cmd_init` / `cmd_run_worker` 初始化
+- 子进程启动走 `infra/server.py` 调 `subprocess` 跑 `python -m agents_chat.v2.main run-worker` (通过 `v2/main.py` shim)
+- WebUI 静态文件跟 server 代码同包, 部署时只需 copy `src/agents_chat/v2/` 即可
 
 ## 两种运行模式
 
@@ -96,7 +114,7 @@ docs/
 ```bash
 # 全部测试
 .venv/bin/python -m pytest tests/unit/ -q
-# → 370 passed
+# → 307 passed
 
 # 只跑 v2 tests
 .venv/bin/python -m pytest tests/unit/v2/ -q

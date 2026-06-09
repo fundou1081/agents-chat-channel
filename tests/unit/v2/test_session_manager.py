@@ -4,7 +4,7 @@ import json
 import time
 from pathlib import Path
 
-from agents_chat.v2.session_manager import Session, SessionManager
+from agents_chat.v2.core.session_manager import Session, SessionManager
 
 
 class TestSessionDataclass:

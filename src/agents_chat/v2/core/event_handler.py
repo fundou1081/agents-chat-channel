@@ -35,21 +35,21 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from .cli.base import CLI
-from .communication import CommunicationComponent
-from .decision import Decision, DecisionConfig, DecisionMaker
-from .gates import Gate, GateChain, GateResult
-from .files.channel import Channel
-from .files.lock import (
+from ..infra.cli.base import CLI
+from ..core.communication import CommunicationComponent
+from ..core.decision import Decision, DecisionConfig, DecisionMaker
+from ..infra.gates import Gate, GateChain, GateResult
+from ..infra.files.channel import Channel
+from ..infra.files.lock import (
     acquire as lock_acquire,
     is_held_by as lock_is_held_by,
     refresh as lock_refresh,
     release as lock_release,
 )
-from .files.mailbox import Mailbox
-from .session_manager import Session, SessionManager
-from .state_board import StateBoard
-from .status import parse_status_block
+from ..infra.files.mailbox import Mailbox
+from ..core.session_manager import Session, SessionManager
+from ..infra.state_board import StateBoard
+from ..core.status import parse_status_block
 
 
 logger = logging.getLogger(__name__)
@@ -244,7 +244,7 @@ class EventHandler:
         """轮询单个频道, 检测新消息, 决定要不要发言."""
         if not self.channels_dir:
             return
-        from .files.channel import Channel
+        from ..infra.files.channel import Channel
         ch = Channel(self.channels_dir / f"{channel}.jsonl", channel)
         offset = self._channel_offsets.get(channel, 0)
 
@@ -415,7 +415,7 @@ class EventHandler:
         """写消息到频道."""
         if not self.channels_dir:
             return
-        from .files.channel import Channel
+        from ..infra.files.channel import Channel
         ch = Channel(self.channels_dir / f"{channel}.jsonl", channel)
 
         # 解析 STATUS 块
@@ -596,7 +596,7 @@ class EventHandler:
         # 2. 调 DecisionMaker (如果 ready)
         if self.decision_maker and self.decision_maker.is_ready:
             try:
-                from .decision import Decision
+                from ..core.decision import Decision
                 decision: Decision = await self.decision_maker.decide(
                     mail=mail,
                     sessions=sessions_snapshot,
@@ -644,7 +644,7 @@ class EventHandler:
         """
         if not self.channels_dir:
             return
-        from .files.channel import Channel
+        from ..infra.files.channel import Channel
         ch = Channel(self.channels_dir / f"{channel}.jsonl", channel)
         body = (
             f"[{self.agent_id}] ignored (DecisionMaker skip)\n\n"
@@ -805,7 +805,7 @@ channel: {channel}
         """把 LLM 的 reply 写到频道."""
         if not self.channels_dir:
             return
-        from .files.channel import Channel
+        from ..infra.files.channel import Channel
         ch = Channel(self.channels_dir / f"{channel}.jsonl", channel)
         mentions = extract_mentions(output_text)
         ch.append(
@@ -821,7 +821,7 @@ channel: {channel}
         """写 status_report 消息到 task 关联的频道."""
         if not self.channels_dir or not status:
             return
-        from .files.channel import Channel
+        from ..infra.files.channel import Channel
         channel = task.get("channel", self.default_channel)
         ch = Channel(self.channels_dir / f"{channel}.jsonl", channel)
         body = (
@@ -848,7 +848,7 @@ channel: {channel}
         """CLI 失败: 写错误到频道 + STATUS 块."""
         if not self.channels_dir:
             return
-        from .files.channel import Channel
+        from ..infra.files.channel import Channel
         ch = Channel(self.channels_dir / f"{channel}.jsonl", channel)
         body = (
             f"[{self.agent_id}] CLI 错误: {error}\n\n"
@@ -876,7 +876,7 @@ channel: {channel}
         """
         if not self.channels_dir:
             return
-        from .files.channel import Channel
+        from ..infra.files.channel import Channel
         ch = Channel(self.channels_dir / f"{channel}.jsonl", channel)
         body = (
             f"[{self.agent_id}] {direction} gate REJECTED: {reason}\n\n"
@@ -905,8 +905,8 @@ channel: {channel}
         """提取 reply 里的 @mention, 投递 mention 邮件."""
         if not self.channels_dir:
             return
-        from .files.channel import Channel
-        from .files.mailbox import Mailbox
+        from ..infra.files.channel import Channel
+        from ..infra.files.mailbox import Mailbox
         mentions = [m for m in extract_mentions(reply_text) if m != self.agent_id]
         for target in mentions:
             mb_path = self.channels_dir.parent / "mailboxes" / f"{target}.json"
@@ -928,7 +928,7 @@ channel: {channel}
 
     def _default_status_for_task(self, task: dict):
         """task 没关联 session, 生成默认 STATUS."""
-        from .status import Status
+        from ..core.status import Status
         return Status(
             session_id="",
             task_id=task.get("task_id", ""),

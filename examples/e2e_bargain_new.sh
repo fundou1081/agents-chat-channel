@@ -59,7 +59,7 @@ $VENV -c "
 import sys, os
 sys.path.insert(0, 'src')
 from pathlib import Path
-from agents_chat.v2.main import cmd_init
+from agents_chat.v2.infra.main import cmd_init
 import argparse
 data_dir = '$DATA_DIR'
 ns = argparse.Namespace(data_dir=data_dir)
@@ -74,7 +74,7 @@ echo ""
 echo "T=2  配置 fish-market 频道 (god=admin, max_messages=$MAX_MESSAGES)"
 $VENV -c "
 import sys; sys.path.insert(0, 'src')
-from agents_chat.v2.files.channel import Channel
+from agents_chat.v2.infra.files import Channel
 from pathlib import Path
 
 DATA_DIR = Path('$DATA_DIR')
@@ -116,9 +116,9 @@ TIMEOUT_SECS_VAL=$TIMEOUT_SECS
 $VENV -c "
 import asyncio, sys, time, os
 sys.path.insert(0, 'src')
-from agents_chat.v2.agent import Agent
-from agents_chat.v2.cli.opencode import OpenCodeCLI
-from agents_chat.v2.files.mailbox import Mailbox
+from agents_chat.v2.core.agent import Agent
+from agents_chat.v2.infra.cli import OpenCodeCLI
+from agents_chat.v2.infra.files import Mailbox
 from pathlib import Path
 
 DATA_DIR = Path('$DATA_DIR')
@@ -197,7 +197,7 @@ async def guard():
         await asyncio.sleep(3)
         elapsed = time.time() - start_time
         # 检查发言轮数 (通过 channel 消息数估算)
-        from agents_chat.v2.files.channel import Channel
+        from agents_chat.v2.infra.files import Channel
         ch = Channel(DATA_DIR / 'channels' / 'fish-market.jsonl', 'fish-market')
         msg_count = len(ch)  # Channel.__len__
         rounds = max(0, msg_count - 2)  # 去掉 god 的前 2 条初始消息
@@ -278,7 +278,7 @@ echo ""
 echo "=== 发言统计 ==="
 $VENV -c "
 import sys; sys.path.insert(0, 'src')
-from agents_chat.v2.files.channel import Channel
+from agents_chat.v2.infra.files import Channel
 from pathlib import Path
 DATA_DIR = Path('$DATA_DIR')
 ch = Channel(DATA_DIR / 'channels' / 'fish-market.jsonl', 'fish-market')
@@ -302,7 +302,7 @@ echo ""
 echo "=== 频道 max_messages 检查 ==="
 $VENV -c "
 import sys; sys.path.insert(0, 'src')
-from agents_chat.v2.files.channel import Channel
+from agents_chat.v2.infra.files import Channel
 from pathlib import Path
 DATA_DIR = Path('$DATA_DIR')
 ch = Channel(DATA_DIR / 'channels' / 'fish-market.jsonl', 'fish-market')

@@ -31,9 +31,9 @@ import asyncio
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional
 
-from .files.channel import Channel
-from .files.mailbox import Mailbox
-from .state_board import StateBoard
+from ..infra.files.channel import Channel
+from ..infra.files.mailbox import Mailbox
+from ..infra.state_board import StateBoard
 
 
 # poll interval (被动 wait 的 timeout)
