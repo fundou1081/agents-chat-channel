@@ -9,7 +9,7 @@ import pytest
 def run_cli(*args, data_dir: str) -> subprocess.CompletedProcess:
     """Helper: run main.py via subprocess."""
     return subprocess.run(
-        [sys.executable, "-m", "agents_chat.v2.main", "--data-dir", data_dir, *args],
+        [sys.executable, "-m", "agents_chat.main", "--data-dir", data_dir, *args],
         capture_output=True, text=True, cwd=str(Path(__file__).parent.parent.parent.parent),
     )
 

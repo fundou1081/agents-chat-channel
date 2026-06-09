@@ -58,7 +58,7 @@ rm -rf "$DATA_DIR"
 # =============================================================================
 echo ""
 echo "T=1  init"
-$VENV -m agents_chat.v2.main init --data-dir "$DATA_DIR" 2>&1 | tail -2
+$VENV -m agents_chat.main init --data-dir "$DATA_DIR" 2>&1 | tail -2
 
 # =============================================================================
 # 准备 workspace + opencode.md (简短, 减少 token)
@@ -106,7 +106,7 @@ echo ""
 echo "T=2  配置 fish-market 频道成员"
 $VENV -c "
 import sys; sys.path.insert(0, 'src')
-from agents_chat.v2.infra.files import Channel
+from agents_chat.infra.files import Channel
 ch = Channel('$DATA_DIR/channels/fish-market.jsonl', 'fish-market')
 ch.add_admin('god')              # god 是频道管理员
 ch.add_member('seller-fish')
@@ -130,11 +130,11 @@ TIMEOUT_SECS_VAL=$TIMEOUT_SECS
 $VENV -c "
 import asyncio, sys, time, signal
 sys.path.insert(0, 'src')
-from agents_chat.v2.core.agent import Agent
-from agents_chat.v2.scanner import Scanner
-from agents_chat.v2.scheduler import Scheduler
-from agents_chat.v2.infra.cli import OpenCodeCLI
-from agents_chat.v2.infra.files import Mailbox
+from agents_chat.core.agent import Agent
+from agents_chat.scanner import Scanner
+from agents_chat.scheduler import Scheduler
+from agents_chat.infra.cli import OpenCodeCLI
+from agents_chat.infra.files import Mailbox
 from pathlib import Path
 
 DATA_DIR = Path('$DATA_DIR')
@@ -222,7 +222,7 @@ sleep 8
 # 轮次: god 发邮件, 每封间隔 OPENCODE_WAIT 秒
 # =============================================================================
 OPENCODE_WAIT=25   # 等待 opencode 处理 (minimax-m3-free 较慢)
-POST="$VENV -m agents_chat.v2.main post fish-market --sender god --data-dir $DATA_DIR"
+POST="$VENV -m agents_chat.main post fish-market --sender god --data-dir $DATA_DIR"
 
 echo ""
 echo "T=$((11)) Round 0: god @sell 开价"
@@ -305,7 +305,7 @@ echo "  验证"
 echo "============================================"
 echo ""
 echo "=== fish-market 对话 (tail 20) ==="
-$VENV -m agents_chat.v2.main tail fish-market --n 20 --data-dir "$DATA_DIR" 2>&1
+$VENV -m agents_chat.main tail fish-market --n 20 --data-dir "$DATA_DIR" 2>&1
 
 echo ""
 echo "=== run-all log 关键行 (ERROR/WARN/reply/STATUS) ==="

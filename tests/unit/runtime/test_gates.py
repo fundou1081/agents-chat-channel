@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from agents_chat.v2.infra.gates import (
+from agents_chat.infra.gates import (
     ControlCharsGate,
     GateChain,
     GateResult,
@@ -312,8 +312,8 @@ class TestSchedulerGateIntegration:
     @pytest.fixture
     def tmp_data(self, tmp_path):
         """临时 data_dir, 含一个 MockCLI + 1 个 agent."""
-        from agents_chat.v2.core.agent import Agent
-        from agents_chat.v2.infra.cli import MockCLI
+        from agents_chat.core.agent import Agent
+        from agents_chat.infra.cli import MockCLI
         agent = Agent(
             agent_id="gated",
             cli=MockCLI(),
@@ -337,7 +337,7 @@ class TestSchedulerGateIntegration:
     @pytest.mark.asyncio
     async def test_input_gate_rejects_no_llm_call(self, tmp_data):
         """input gate 拒绝时, 不调 LLM, 写 system 消息."""
-        from agents_chat.v2.infra.gates import Gate, GateResult
+        from agents_chat.infra.gates import Gate, GateResult
 
         class DenyAll:
             name = "deny_all"
@@ -347,8 +347,8 @@ class TestSchedulerGateIntegration:
                 return GateResult.allow(text, "deny_all")
 
         # 重建 agent, 加 input gate
-        from agents_chat.v2.core.agent import Agent
-        from agents_chat.v2.infra.cli import MockCLI
+        from agents_chat.core.agent import Agent
+        from agents_chat.infra.cli import MockCLI
         data_dir = tmp_data["data_dir"]
         agent = Agent(
             agent_id="gated",
@@ -387,7 +387,7 @@ class TestSchedulerGateIntegration:
     @pytest.mark.asyncio
     async def test_output_gate_sanitizes(self, tmp_data):
         """output gate 改写后, 频道里看到的是改写版."""
-        from agents_chat.v2.infra.gates import Gate, GateResult
+        from agents_chat.infra.gates import Gate, GateResult
 
         class AppendTag:
             name = "append_tag"
@@ -396,8 +396,8 @@ class TestSchedulerGateIntegration:
             def check_output(self, text):
                 return GateResult.allow(text + "\n[sanitized]", "append_tag")
 
-        from agents_chat.v2.core.agent import Agent
-        from agents_chat.v2.infra.cli import MockCLI
+        from agents_chat.core.agent import Agent
+        from agents_chat.infra.cli import MockCLI
         data_dir = tmp_data["data_dir"]
         agent = Agent(
             agent_id="gated",
@@ -429,8 +429,8 @@ class TestSchedulerGateIntegration:
     @pytest.mark.asyncio
     async def test_no_gates_default_allow(self, tmp_data):
         """不传 gates = 旧行为, 正常 reply."""
-        from agents_chat.v2.core.agent import Agent
-        from agents_chat.v2.infra.cli import MockCLI
+        from agents_chat.core.agent import Agent
+        from agents_chat.infra.cli import MockCLI
         data_dir = tmp_data["data_dir"]
         agent = Agent(
             agent_id="gated",

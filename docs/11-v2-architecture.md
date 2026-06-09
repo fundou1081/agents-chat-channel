@@ -28,7 +28,7 @@
 | `Channel` | `channels/{name}.jsonl` | 追加模式 (`open('a')` 原子, < PIPE_BUF) |
 | `lock` (函数集) | `locks/task_{id}.lock` | `O_CREAT | O_EXCL` 原子创建, mtime 判 TTL |
 
-### 1.2 Agent (`v2/agent.py`)
+### 1.2 Agent (`core/agent.py`)
 
 每个 Agent 绑一个 CLI 程序 (qwen / opencode / mock), 独立进程, 拉邮箱主循环:
 
@@ -51,7 +51,7 @@ while not stop:
 9. `lock_refresh()` 续约
 10. 二次路由: reply 里的 @mention → 投递 mention 邮件
 
-### 1.3 Scanner (`v2/scanner.py`)
+### 1.3 Scanner (`infra/scanner.py` (设计))
 
 纯程序路由, **不调 LLM**:
 
@@ -71,7 +71,7 @@ while not stop:
 - 任何消息含 STATUS 块 → `state_board.update_from_status()`
 - agent 自己写的消息不投递给自己 (避免循环)
 
-### 1.4 Scheduler (`v2/scheduler.py`)
+### 1.4 Scheduler (`infra/scheduler.py` (设计))
 
 全局调度中心, 定期检查超时任务:
 
@@ -104,7 +104,7 @@ Stale 处理状态机 (per task):
 - progress 0-100, 100 = 任务完成
 - 缺 STATUS 块 → Scheduler 不会 timeout (heartbeat 没更新)
 
-### 1.6 CLI 抽象 (`v2/cli/`)
+### 1.6 CLI 抽象 (`infra/cli/`)
 
 - `MockCLI` — 测试用, 0 token, echo + STATUS
 - `OpenCodeCLI` — subprocess 调 opencode CLI (`opencode run "prompt" --session <id>`)
@@ -170,27 +170,27 @@ data_v2/
 
 ```bash
 # 初始化
-python -m agents_chat.v2.main init --data-dir ./data_v2
+python -m agents_chat.main init --data-dir ./data_v2
 
 # 启动一组 (开发模式, 一起跑 scanner + scheduler + 2 agent)
-python -m agents_chat.v2.main run-all \
+python -m agents_chat.main run-all \
     --data-dir ./data_v2 \
     --agents qwencode claude \
     --cli mock
 
 # 生产模式: 分别跑 (不同终端)
-python -m agents_chat.v2.main run-scanner --data-dir ./data_v2
-python -m agents_chat.v2.main run-scheduler --data-dir ./data_v2 --stale-ttl 300
-python -m agents_chat.v2.main run-agent qwencode --cli qwen --data-dir ./data_v2
-python -m agents_chat.v2.main run-agent claude --cli opencode --data-dir ./data_v2
+python -m agents_chat.main run-scanner --data-dir ./data_v2
+python -m agents_chat.main run-scheduler --data-dir ./data_v2 --stale-ttl 300
+python -m agents_chat.main run-agent qwencode --cli qwen --data-dir ./data_v2
+python -m agents_chat.main run-agent claude --cli opencode --data-dir ./data_v2
 
 # 交互 helper
-python -m agents_chat.v2.main post general "@qwencode 帮我修 bug" --sender god
-python -m agents_chat.v2.main tail general --n 20
-python -m agents_chat.v2.main status                    # 所有 task
-python -m agents_chat.v2.main status task_042           # 单个 task
-python -m agents_chat.v2.main inbox qwencode            # 看邮箱 pending
-python -m agents_chat.v2.main reset --yes              # ⚠️ 清空
+python -m agents_chat.main post general "@qwencode 帮我修 bug" --sender god
+python -m agents_chat.main tail general --n 20
+python -m agents_chat.main status                    # 所有 task
+python -m agents_chat.main status task_042           # 单个 task
+python -m agents_chat.main inbox qwencode            # 看邮箱 pending
+python -m agents_chat.main reset --yes              # ⚠️ 清空
 ```
 
 ## 4. 任务状态机
@@ -214,19 +214,19 @@ python -m agents_chat.v2.main reset --yes              # ⚠️ 清空
 
 ```bash
 # 1. 启动 run-all
-python -m agents_chat.v2.main run-all --data-dir ./data_v2 \
+python -m agents_chat.main run-all --data-dir ./data_v2 \
     --agents qwencode claude --cli mock &
 
 # 2. god 发 [TASK] 广播
-python -m agents_chat.v2.main post general \
+python -m agents_chat.main post general \
     "[TASK task_demo_001] 写一个 hello.py" --sender god
 
 # 3. god @ 单一 agent
-python -m agents_chat.v2.main post general \
+python -m agents_chat.main post general \
     "@qwencode 帮我看下 task_demo_001" --sender god
 
 # 4. 看结果
-python -m agents_chat.v2.main tail general --n 20
+python -m agents_chat.main tail general --n 20
 # 看到: god (task_broadcast) → qwencode + claude 各 reply
 #       god (mention) → qwencode reply (用同 session resume)
 ```

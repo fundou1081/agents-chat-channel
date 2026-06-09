@@ -50,7 +50,7 @@ rm -rf "$DATA_DIR"
 
 echo ""
 echo "T=1  init"
-$VENV -m agents_chat.v2.main init --data-dir "$DATA_DIR" 2>&1 | tail -2
+$VENV -m agents_chat.main init --data-dir "$DATA_DIR" 2>&1 | tail -2
 
 # =============================================================================
 # WorkerFactory: 创建 workers (各自独立 workspace, 隔离配置)
@@ -67,7 +67,7 @@ echo ""
 echo "T=2  配置频道成员 + admin 发第一条消息"
 $VENV -c "
 import sys; sys.path.insert(0, 'src')
-from agents_chat.v2.infra.files import Channel
+from agents_chat.infra.files import Channel
 
 ch = Channel('$DATA_DIR/channels/fish-market.jsonl', 'fish-market')
 ch.add_admin('god')              # god 是频道管理员
@@ -102,8 +102,8 @@ TIMEOUT_SECS_VAL=$TIMEOUT_SECS
 $VENV -c "
 import asyncio, sys, time
 sys.path.insert(0, 'src')
-from agents_chat.v2.infra.worker_factory import WorkerFactory
-from agents_chat.v2.infra.files import Mailbox
+from agents_chat.infra.worker_factory import WorkerFactory
+from agents_chat.infra.files import Mailbox
 from pathlib import Path
 
 DATA_DIR = Path('$DATA_DIR')
@@ -259,7 +259,7 @@ echo "  验证"
 echo "============================================"
 echo ""
 echo "=== fish-market 对话 (全部) ==="
-$VENV -m agents_chat.v2.main tail fish-market --n 50 --data-dir "$DATA_DIR" 2>&1
+$VENV -m agents_chat.main tail fish-market --n 50 --data-dir "$DATA_DIR" 2>&1
 
 echo ""
 echo "=== run-all log 关键行 ==="
@@ -270,7 +270,7 @@ echo "=== 发言统计 ==="
 $VENV -c "
 import json, sys
 sys.path.insert(0, 'src')
-from agents_chat.v2.infra.files import Channel
+from agents_chat.infra.files import Channel
 ch = Channel('$DATA_DIR/channels/fish-market.jsonl', 'fish-market')
 msgs = ch.tail(100)
 counts = {}

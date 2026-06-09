@@ -93,7 +93,7 @@ src/agents_chat/v2/
 ├── status.py              # STATUS 块解析
 └── main.py                # CLI 入口
 
-tests/unit/v2/
+tests/unit/runtime/
 ├── test_session_manager.py
 ├── test_communication.py
 ├── test_event_handler.py
@@ -105,7 +105,7 @@ tests/unit/v2/
 
 ### 3.1 SessionManager (记忆)
 
-**文件**: `v2/session_manager.py`
+**文件**: `core/session_manager.py`
 **职责**: 持久化每个 agent 的 session 列表, 决定续/新建
 
 ```python
@@ -140,7 +140,7 @@ class SessionManager:
 
 ### 3.2 CommunicationComponent (感知)
 
-**文件**: `v2/communication.py`
+**文件**: `core/communication.py`
 **职责**: 主动 pull 各种数据源 + 被动 push 事件, 简单 API 判断
 
 ```python
@@ -179,7 +179,7 @@ class CommunicationComponent:
 
 ### 3.3 EventHandler (决策)
 
-**文件**: `v2/event_handler.py`
+**文件**: `core/event_handler.py`
 **职责**: 听 comms 事件, 决定怎么处理, 调度 sessions + cli
 
 ```python
@@ -215,7 +215,7 @@ class EventHandler:
 
 ### 3.4 CLI Client (执行)
 
-**文件**: `v2/cli/{base,mock,opencode,qwen}.py`
+**文件**: `infra/cli/{base,mock,opencode,qwen}.py`
 **职责**: 调外部 LLM 工具, 返回回复
 
 ```python
@@ -237,7 +237,7 @@ class CLI(Protocol):
 
 ### 3.5 Agent 容器 (组装 + 委派)
 
-**文件**: `v2/agent.py`
+**文件**: `core/agent.py`
 **职责**: 组装 4 组件, 写 workspace 引导, 委派主循环
 
 ```python
@@ -375,11 +375,11 @@ T=4  buyer 看到 80, 续 Session → reply="成交 80"
 
 | 文件 | 行数 | 角色 |
 |------|------|------|
-| `v2/session_manager.py` | 220 | Session + SessionManager |
-| `v2/communication.py` | 200 | CommunicationComponent |
-| `v2/event_handler.py` | 370 | EventHandler |
-| `v2/agent.py` | 250 | Agent 容器 (4 组件组装 + 兼容) |
-| `v2/cli/{base,mock,opencode,qwen}.py` | ~100 each | CLI 抽象 |
+| `core/session_manager.py` | 220 | Session + SessionManager |
+| `core/communication.py` | 200 | CommunicationComponent |
+| `core/event_handler.py` | 370 | EventHandler |
+| `core/agent.py` | 250 | Agent 容器 (4 组件组装 + 兼容) |
+| `infra/cli/{base,mock,opencode,qwen}.py` | ~100 each | CLI 抽象 |
 | **总 v2 源** | ~1500 | 4 组件 + CLI + 工具 |
 
 vs 老 Agent: 538 行单体 → 4 组件 × ~250 行 = 平均 250 行, 但**独立可测 + 关注分离**。

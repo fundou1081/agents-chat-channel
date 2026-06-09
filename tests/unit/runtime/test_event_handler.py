@@ -4,18 +4,18 @@ import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock
 
-from agents_chat.v2.core.event_handler import (
+from agents_chat.core.event_handler import (
     EventHandler,
     extract_mentions,
     derive_task_id,
 )
-from agents_chat.v2.infra.cli import CLIResponse
-from agents_chat.v2.infra.cli import MockCLI
-from agents_chat.v2.core.communication import CommunicationComponent
-from agents_chat.v2.infra.files import Channel
-from agents_chat.v2.infra.files import Mailbox
-from agents_chat.v2.core.session_manager import SessionManager
-from agents_chat.v2.infra.state_board import StateBoard
+from agents_chat.infra.cli import CLIResponse
+from agents_chat.infra.cli import MockCLI
+from agents_chat.core.communication import CommunicationComponent
+from agents_chat.infra.files import Channel
+from agents_chat.infra.files import Mailbox
+from agents_chat.core.session_manager import SessionManager
+from agents_chat.infra.state_board import StateBoard
 
 
 class MockCLIAlwaysOK:

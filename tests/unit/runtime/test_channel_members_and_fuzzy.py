@@ -3,8 +3,8 @@ import pytest
 import asyncio
 from pathlib import Path
 
-from agents_chat.v2.infra.files import Channel
-from agents_chat.v2.infra.files import Channel, fuzzy_resolve_mention
+from agents_chat.infra.files import Channel
+from agents_chat.infra.files import Channel, fuzzy_resolve_mention
 
 
 class TestChannelMembers:

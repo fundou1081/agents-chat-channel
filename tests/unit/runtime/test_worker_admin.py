@@ -26,21 +26,21 @@ from pathlib import Path
 
 class TestChannelAdminBasic:
     def test_add_admin_default_is_worker(self, tmp_path):
-        from agents_chat.v2.infra.files import Channel
+        from agents_chat.infra.files import Channel
         ch = Channel(tmp_path / "general.jsonl", "general")
         assert ch.add_admin("worker_x") is True
         assert "worker_x" in ch.list_admins()
         assert "worker_x" not in ch.list_human_admins()
 
     def test_add_admin_explicit_worker(self, tmp_path):
-        from agents_chat.v2.infra.files import Channel
+        from agents_chat.infra.files import Channel
         ch = Channel(tmp_path / "general.jsonl", "general")
         ch.add_admin("worker_x", is_worker=True)
         assert "worker_x" in ch.list_admins()
         assert "worker_x" not in ch.list_human_admins()
 
     def test_add_admin_human(self, tmp_path):
-        from agents_chat.v2.infra.files import Channel
+        from agents_chat.infra.files import Channel
         ch = Channel(tmp_path / "general.jsonl", "general")
         assert ch.add_admin("user_ou_abc", is_worker=False) is True
         # 人类 admin 不进 admins 列表
@@ -49,19 +49,19 @@ class TestChannelAdminBasic:
         assert "user_ou_abc" in ch.list_human_admins()
 
     def test_add_admin_duplicate_worker(self, tmp_path):
-        from agents_chat.v2.infra.files import Channel
+        from agents_chat.infra.files import Channel
         ch = Channel(tmp_path / "general.jsonl", "general")
         assert ch.add_admin("worker_x") is True
         assert ch.add_admin("worker_x") is False  # 重复
 
     def test_add_admin_duplicate_human(self, tmp_path):
-        from agents_chat.v2.infra.files import Channel
+        from agents_chat.infra.files import Channel
         ch = Channel(tmp_path / "general.jsonl", "general")
         assert ch.add_admin("user_ou_abc", is_worker=False) is True
         assert ch.add_admin("user_ou_abc", is_worker=False) is False
 
     def test_worker_admin_also_member(self, tmp_path):
-        from agents_chat.v2.infra.files import Channel
+        from agents_chat.infra.files import Channel
         ch = Channel(tmp_path / "general.jsonl", "general")
         ch.add_admin("worker_x")
         # add_admin 应当自动 add_member
@@ -69,13 +69,13 @@ class TestChannelAdminBasic:
 
     def test_human_admin_not_member(self, tmp_path):
         """人类 admin 不在 members 列表里 (他不是 agent, 不需要广播)."""
-        from agents_chat.v2.infra.files import Channel
+        from agents_chat.infra.files import Channel
         ch = Channel(tmp_path / "general.jsonl", "general")
         ch.add_admin("user_ou_abc", is_worker=False)
         assert "user_ou_abc" not in ch.list_members()
 
     def test_mixed_admins(self, tmp_path):
-        from agents_chat.v2.infra.files import Channel
+        from agents_chat.infra.files import Channel
         ch = Channel(tmp_path / "general.jsonl", "general")
         ch.add_admin("worker_x")
         ch.add_admin("user_ou_abc", is_worker=False)
@@ -93,7 +93,7 @@ class TestChannelAdminBasic:
 
 class TestChannelAdminQueries:
     def test_is_admin_worker(self, tmp_path):
-        from agents_chat.v2.infra.files import Channel
+        from agents_chat.infra.files import Channel
         ch = Channel(tmp_path / "general.jsonl", "general")
         ch.add_admin("worker_x")
         assert ch.is_admin("worker_x", is_worker=True) is True
@@ -101,7 +101,7 @@ class TestChannelAdminQueries:
         assert ch.is_admin("worker_x") is True  # 任意类型
 
     def test_is_admin_human(self, tmp_path):
-        from agents_chat.v2.infra.files import Channel
+        from agents_chat.infra.files import Channel
         ch = Channel(tmp_path / "general.jsonl", "general")
         ch.add_admin("user_ou_abc", is_worker=False)
         assert ch.is_admin("user_ou_abc", is_worker=False) is True
@@ -109,14 +109,14 @@ class TestChannelAdminQueries:
         assert ch.is_admin("user_ou_abc") is True
 
     def test_is_admin_not_admin(self, tmp_path):
-        from agents_chat.v2.infra.files import Channel
+        from agents_chat.infra.files import Channel
         ch = Channel(tmp_path / "general.jsonl", "general")
         assert ch.is_admin("nobody") is False
         assert ch.is_admin("nobody", is_worker=True) is False
         assert ch.is_admin("nobody", is_worker=False) is False
 
     def test_remove_admin_worker(self, tmp_path):
-        from agents_chat.v2.infra.files import Channel
+        from agents_chat.infra.files import Channel
         ch = Channel(tmp_path / "general.jsonl", "general")
         ch.add_admin("worker_x")
         assert ch.remove_admin("worker_x", is_worker=True) is True
@@ -125,14 +125,14 @@ class TestChannelAdminQueries:
         assert ch.remove_admin("worker_x", is_worker=True) is False
 
     def test_remove_admin_human(self, tmp_path):
-        from agents_chat.v2.infra.files import Channel
+        from agents_chat.infra.files import Channel
         ch = Channel(tmp_path / "general.jsonl", "general")
         ch.add_admin("user_ou_abc", is_worker=False)
         assert ch.remove_admin("user_ou_abc", is_worker=False) is True
         assert "user_ou_abc" not in ch.list_human_admins()
 
     def test_remove_admin_wrong_type(self, tmp_path):
-        from agents_chat.v2.infra.files import Channel
+        from agents_chat.infra.files import Channel
         ch = Channel(tmp_path / "general.jsonl", "general")
         ch.add_admin("user_ou_abc", is_worker=False)
         # 试图用 is_worker=True 移除 (不匹配)
@@ -149,7 +149,7 @@ class TestChannelAdminQueries:
 class TestChannelMetadataCompat:
     def test_load_legacy_meta(self, tmp_path):
         """老 metadata (没 human_admins / admin_types) 加载时自动补字段."""
-        from agents_chat.v2.infra.files import Channel
+        from agents_chat.infra.files import Channel
         # 手动写一个老格式 meta 文件
         meta_path = tmp_path / "general.jsonl.meta.json"
         meta_path.parent.mkdir(parents=True, exist_ok=True)
@@ -172,7 +172,7 @@ class TestChannelMetadataCompat:
         assert "worker_b" in ch.list_members()
 
     def test_corrupted_meta_resets(self, tmp_path):
-        from agents_chat.v2.infra.files import Channel
+        from agents_chat.infra.files import Channel
         meta_path = tmp_path / "general.jsonl.meta.json"
         meta_path.parent.mkdir(parents=True, exist_ok=True)
         meta_path.write_text("not valid json {{{")

@@ -11,11 +11,11 @@
 
 | 组件 | 职责 | 实现 |
 |------|------|------|
-| **CommunicationComponent** | Perceive (mailbox + 频道轮询) | `src/agents_chat/v2/core/communication.py` |
-| **EventHandler** | Decide 触发 (passive + proactive) | `src/agents_chat/v2/core/event_handler.py` |
-| **DecisionMaker** | Decide 逻辑 (decide_session + decide_speak) | `src/agents_chat/v2/core/decision.py` |
-| **SessionManager** | Remember (session 持久化 JSON) | `src/agents_chat/v2/core/session_manager.py` |
-| **CLI** | 执行 (调外部 LLM: opencode/qwen/mock) | `src/agents_chat/v2/infra/cli/` |
+| **CommunicationComponent** | Perceive (mailbox + 频道轮询) | `src/agents_chat/core/communication.py` |
+| **EventHandler** | Decide 触发 (passive + proactive) | `src/agents_chat/core/event_handler.py` |
+| **DecisionMaker** | Decide 逻辑 (decide_session + decide_speak) | `src/agents_chat/core/decision.py` |
+| **SessionManager** | Remember (session 持久化 JSON) | `src/agents_chat/core/session_manager.py` |
+| **CLI** | 执行 (调外部 LLM: opencode/qwen/mock) | `src/agents_chat/infra/cli/` |
 
 **文件总线**: `data_v2/channels/` + `data_v2/mailboxes/` + `data_v2/sessions/` + `data_v2/locks/`
 
@@ -46,7 +46,7 @@ pip install -e .
 ```
 
 # 初始化数据目录
-python -m agents_chat.v2.main init --data-dir ./data_v2
+python -m agents_chat.main init --data-dir ./data_v2
 
 # 跑 e2e 讨价还价 (被动模式, god 控制节奏)
 MAX_ROUNDS=4 TIMEOUT_SECS=240 bash examples/e2e_bargain_real.sh
@@ -62,7 +62,7 @@ MAX_ROUNDS=4 TIMEOUT_SECS=180 bash examples/e2e_autonomous.sh
 
 ```
 agents-chat-channel/
-├── src/agents_chat/v2/
+├── src/agents_chat/
 │   ├── core/                      # PDR 核心 (业务逻辑)
 │   │   ├── agent.py               # Agent 容器 (4 组件组装)
 │   │   ├── communication.py       # CommunicationComponent (Perceive)
@@ -82,11 +82,11 @@ agents-chat-channel/
 │   │   ├── index.html
 │   │   ├── app.js
 │   │   └── style.css
-│   ├── main.py                    # Shim: `python -m agents_chat.v2.main` 兼容
-│   ├── server.py                  # Shim: `python -m agents_chat.v2.server` 兼容
-│   └── __init__.py                # 公共 API re-export
+│   ├── main.py                    # CLI 入口 (`python -m agents_chat.main`)
+│   ├── server.py                  # FastAPI server 入口 (`python -m agents_chat.server`)
+│   └── __init__.py                # 公共 API re-export (`from agents_chat import Agent, ...`)
 ├── tests/unit/                    # 307 单元测试
-│   └── v2/                        # (按 src/agents_chat/v2/ 结构对应)
+│   └── runtime/                   # 跟 src/agents_chat/{core,infra} 对应
 ├── examples/
 │   ├── e2e_bargain_real.sh        # 讨价还价 e2e (passive 模式)
 │   ├── e2e_bargain_new.sh         # 讨价还价 e2e (新)
@@ -98,9 +98,9 @@ agents-chat-channel/
 ```
 
 **重要约定**:
-- 所有 agent 进程都走 `infra/main.py:cmd_init` / `cmd_run_worker` 初始化
-- 子进程启动走 `infra/server.py` 调 `subprocess` 跑 `python -m agents_chat.v2.main run-worker` (通过 `v2/main.py` shim)
-- WebUI 静态文件跟 server 代码同包, 部署时只需 copy `src/agents_chat/v2/` 即可
+- 所有 agent 进程都走 `agents_chat.infra.main:cmd_init` / `cmd_run_worker` 初始化
+- 子进程启动走 `agents_chat.infra.server` 调 `subprocess` 跑 `python -m agents_chat.main run-worker`
+- WebUI 静态文件跟 server 代码同包, 部署时只需 copy `src/agents_chat/` 即可
 
 ## 两种运行模式
 

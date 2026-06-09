@@ -150,7 +150,7 @@ class Agent:
 |------|------|
 | `src/agents_chat/v2/core/event_handler.py` | EventHandler (passive + proactive 模式都内含) |
 | `src/agents_chat/v2/core/decision.py` | DecisionMaker (含 `decide_speak` 主动模式逻辑) |
-| `tests/unit/v2/test_event_handler.py` | 主动模式测试 |
+| `tests/unit/runtime/test_event_handler.py` | 主动模式测试 |
 | `examples/e2e_autonomous.sh` | 无 god 的自主 e2e 脚本 |
 
 ### 3.2 改动文件

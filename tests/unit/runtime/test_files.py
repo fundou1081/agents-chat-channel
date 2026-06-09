@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from agents_chat.v2.infra.files import (
+from agents_chat.infra.files import (
     DEFAULT_TTL_SECONDS,
     acquire,
     force_release,
@@ -17,8 +17,8 @@ from agents_chat.v2.infra.files import (
     refresh,
     release,
 )
-from agents_chat.v2.infra.files import Channel
-from agents_chat.v2.infra.files import Mailbox
+from agents_chat.infra.files import Channel
+from agents_chat.infra.files import Mailbox
 
 
 class TestLock:

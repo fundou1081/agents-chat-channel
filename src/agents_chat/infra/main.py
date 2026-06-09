@@ -2,13 +2,13 @@
 CLI 入口 for v2.0.
 
 Usage:
-  python -m agents_chat.v2.main init [--data-dir DIR]
-  python -m agents_chat.v2.main run-worker AGENT_ID [--cli mock|qwen|opencode] [--data-dir DIR]
-  python -m agents_chat.v2.main post CHANNEL CONTENT [--from FROM]
-  python -m agents_chat.v2.main status [TASK_ID]
-  python -m agents_chat.v2.main tail CHANNEL [N]
-  python -m agents_chat.v2.main inbox AGENT_ID
-  python -m agents_chat.v2.main reset
+  python -m agents_chat.main init [--data-dir DIR]
+  python -m agents_chat.main run-worker AGENT_ID [--cli mock|qwen|opencode] [--data-dir DIR]
+  python -m agents_chat.main post CHANNEL CONTENT [--from FROM]
+  python -m agents_chat.main status [TASK_ID]
+  python -m agents_chat.main tail CHANNEL [N]
+  python -m agents_chat.main inbox AGENT_ID
+  python -m agents_chat.main reset
 
 默认 data_dir: ./data_v2 (可用 AGENTS_CHAT_DATA_DIR 环境变量覆盖)
 """

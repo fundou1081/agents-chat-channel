@@ -6,7 +6,7 @@ import sys, os, tempfile, json
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../..", "src"))
 
-from agents_chat.v2.infra.worker_factory import WorkspaceManager
+from agents_chat.infra.worker_factory import WorkspaceManager
 
 
 class TestWorkspaceManager:
@@ -79,7 +79,7 @@ class TestWorkspaceManager:
         os.makedirs(self.ws_path)
         existing = "# 自定义角色\n我是自定义角色定义"
         open(os.path.join(self.ws_path, "roles.md"), "w").write(existing)
-        from agents_chat.v2.infra.worker_factory import _init_workspace
+        from agents_chat.infra.worker_factory import _init_workspace
         from pathlib import Path
         _init_workspace(
             workspace_dir=Path(self.ws_path),

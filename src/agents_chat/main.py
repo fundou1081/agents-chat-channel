@@ -1,9 +1,10 @@
 """
-Backward-compat shim: 实际实现在 infra.main.
+agents-chat-channel v2.0 CLI 入口 (顶层).
 
-保留 `python -m agents_chat.v2.main` 和 `from agents_chat.v2.main import ...` 兼容.
+提供 `python -m agents_chat.main` 入口和子命令 (init/run-worker/post/...).
+
+子命令实现在 `agents_chat.infra.main`.
 """
-from .infra.main import *  # noqa: F401,F403
 from .infra.main import (  # noqa: F401
     main,
     cmd_init,

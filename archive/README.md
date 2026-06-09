@@ -12,7 +12,7 @@
 
 合并到 v2.0 目录结构时已清理:
 
-- ❌ `webui_plans/` — 23 个接手人留下的 webui 规划/设计文档 (v2.0 WebUI 已实装在 `src/agents_chat/v2/webui/`)
+- ❌ `webui_plans/` — 23 个接手人留下的 webui 规划/设计文档 (v2.0 WebUI 已实装在 `src/agents_chat/webui/`)
 - ❌ `data_v1/` — 4 个 v1.x SQLite DB (bulletins / mailbox / sessions / rate_limits)
 - ❌ `memory/2026-06-06.md` — 3 频道架构讨论的一次性工作日志
 

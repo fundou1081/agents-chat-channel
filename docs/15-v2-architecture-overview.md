@@ -52,7 +52,7 @@
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │ 外部 (CLI / WebUI / 别的 agent)                                  │
-│   $ python -m agents_chat.v2.main post fish-market "@sell @buy …"│
+│   $ python -m agents_chat.main post fish-market "@sell @buy …"│
 └────────────────────────────┬─────────────────────────────────────┘
                              │ post 命令
                              ▼
@@ -464,7 +464,7 @@ agent.remove_subscription("old-channel")
 
 | 原则 | 含义 | v2.0 实现 |
 |------|------|----------|
-| **程序路由, AI 执行** | Scanner 纯程序, AI 只在需要时消费 token | `v2/scanner.py` (Scanner) + `v2/event_handler.py` (EventHandler 调 LLM) |
+| **程序路由, AI 执行** | Scanner 纯程序, AI 只在需要时消费 token | `infra/scanner.py` (设计) (Scanner) + `core/event_handler.py` (EventHandler 调 LLM) |
 | **文件总线, 可调试** | 所有状态 = JSONL/JSON 文件, cat/jq 即可看 | `channels/*.jsonl` + `mailboxes/*.json` + `sessions/*.json` + `locks/*.lock` |
 | **多 agent 协作, 单一频道** | N 个 agent 在 1 频道通过 @mention + STATUS 块互动 | `data_v2/channels/{name}.jsonl` + `Channel` 抽象 |
 
@@ -657,20 +657,20 @@ class CLI(Protocol):
 
 | 类别 | tests |
 |------|-------|
-| `tests/unit/v2/test_files.py` | 18 |
-| `tests/unit/v2/test_status_session.py` | 14 |
-| `tests/unit/v2/test_session_manager.py` | 25 |
-| `tests/unit/v2/test_session_snapshot.py` ⭐ 新 (修 1) | 8 |
-| `tests/unit/v2/test_communication.py` | 21 |
-| `tests/unit/v2/test_event_handler.py` | 15 |
-| `tests/unit/v2/test_agent_container.py` | 13 |
-| `tests/unit/v2/test_prompt_injection.py` | 8 |
-| `tests/unit/v2/test_status_single_line.py` | 17 |
-| `tests/unit/v2/test_cross_platform.py` | 17 |
-| `tests/unit/v2/test_workspace.py` | 10 |
-| `tests/unit/v2/test_cli.py` | 9 |
-| `tests/unit/v2/test_channel_members_and_fuzzy.py` | 17 |
-| `tests/unit/v2/test_scanner.py` | 14 |
+| `tests/unit/runtime/test_files.py` | 18 |
+| `tests/unit/runtime/test_status_session.py` | 14 |
+| `tests/unit/runtime/test_session_manager.py` | 25 |
+| `tests/unit/runtime/test_session_snapshot.py` ⭐ 新 (修 1) | 8 |
+| `tests/unit/runtime/test_communication.py` | 21 |
+| `tests/unit/runtime/test_event_handler.py` | 15 |
+| `tests/unit/runtime/test_agent_container.py` | 13 |
+| `tests/unit/runtime/test_prompt_injection.py` | 8 |
+| `tests/unit/runtime/test_status_single_line.py` | 17 |
+| `tests/unit/runtime/test_cross_platform.py` | 17 |
+| `tests/unit/runtime/test_workspace.py` | 10 |
+| `tests/unit/runtime/test_cli.py` | 9 |
+| `tests/unit/runtime/test_channel_members_and_fuzzy.py` | 17 |
+| `tests/unit/runtime/test_scanner.py` | 14 |
 | 老的 v1 (在 `_deprecated/`) | 74 |
 | **总 v2** | **224** |
 | **总 (v1 + v2)** | **298** |
@@ -704,7 +704,7 @@ src/agents_chat/v2/
     ├── opencode.py       # subprocess (minimax-m3-free)
     └── qwen.py           # HTTP API (本地 ollama)
 
-tests/unit/v2/            # 224 tests
+tests/unit/runtime/            # 224 tests
 docs/                     # 15 文档
 examples/                 # 7 e2e 脚本
 data_v2/                  # 运行时 (gitignore 排除)

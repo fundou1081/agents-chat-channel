@@ -151,15 +151,15 @@ data_v2/
 
 ```bash
 # 默认 workspace_dir (data_dir/workspaces/{agent_id})
-python -m agents_chat.v2.main run-agent qwencode --cli qwen --data-dir ./data_v2
+python -m agents_chat.main run-agent qwencode --cli qwen --data-dir ./data_v2
 
 # 自定义 workspace_dir
-python -m agents_chat.v2.main run-agent qwencode --cli opencode \
+python -m agents_chat.main run-agent qwencode --cli opencode \
     --workspace-dir /Users/me/projects/qwencode-ws \
     --data-dir ./data_v2
 
 # 传 system_prompt (写到 <cli>.md)
-python -m agents_chat.v2.main run-agent qwencode --cli opencode \
+python -m agents_chat.main run-agent qwencode --cli opencode \
     --system-prompt "你是 PostgreSQL 专家, 专注查询优化" \
     --data-dir ./data_v2
 
@@ -189,7 +189,7 @@ python -m agents_chat.v2.main run-agent qwencode --cli opencode \
 
 ## 验证
 
-测试: 10 个新 unit tests 覆盖 workspace_dir 功能 (tests/unit/v2/test_workspace.py)
+测试: 10 个新 unit tests 覆盖 workspace_dir 功能 (tests/unit/runtime/test_workspace.py)
 - 默认/自定义 workspace_dir 路径
 - 自动写 <cli_name>.md
 - 不同 CLI 名字 → 不同 MD 文件

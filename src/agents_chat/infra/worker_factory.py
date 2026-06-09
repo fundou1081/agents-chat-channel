@@ -8,7 +8,7 @@ WorkerFactory for v2.0 — CLI 注册表 + Worker 工厂.
   - mock: MockCLI (测试用)
 
 用法:
-    from agents_chat.v2.worker_factory import WorkerFactory, register_cli
+    from agents_chat.infra.worker_factory import WorkerFactory, register_cli
 
     # 注册 CLI 适配器 (可选, 默认已注册)
     register_cli("opencode", OpenCodeCLI)

@@ -96,7 +96,7 @@ EventHandler.handle_mail(mail)
 ### 3.1 DecisionConfig
 
 ```python
-from agents_chat.v2.decision import DecisionConfig
+from agents_chat.decision import DecisionConfig
 
 cfg = DecisionConfig(
     base_url="https://api.openai.com/v1",  # 默认
@@ -129,7 +129,7 @@ class Decision:
 ### 3.3 DecisionMaker
 
 ```python
-from agents_chat.v2.decision import DecisionMaker, DecisionConfig
+from agents_chat.decision import DecisionMaker, DecisionConfig
 
 cfg = DecisionConfig(api_key="sk-xxx", model="gpt-4o-mini")
 dm = DecisionMaker(cfg)
@@ -149,8 +149,8 @@ decision = await dm.decide(
 ### 3.4 集成到 EventHandler / Agent
 
 ```python
-from agents_chat.v2.agent import Agent
-from agents_chat.v2.decision import DecisionConfig, DecisionMaker
+from agents_chat.agent import Agent
+from agents_chat.decision import DecisionConfig, DecisionMaker
 
 # 方式 1: 传 config (自动构造 DecisionMaker)
 agent = Agent(
@@ -285,7 +285,7 @@ LLM 配置有效?
 
 ---
 
-## 8. 测试覆盖 (`tests/unit/v2/test_decision_maker.py`)
+## 8. 测试覆盖 (`tests/unit/runtime/test_decision_maker.py`)
 
 30 tests:
 - `TestDecisionConfig` (4): 默认 / is_valid / env override

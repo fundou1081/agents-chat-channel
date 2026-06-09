@@ -129,7 +129,7 @@ class TestV2FilesystemComponents:
     """v2 files/ 模块应该全用 pathlib, 跨平台."""
 
     def test_channel_pathlib(self, tmp_path):
-        from agents_chat.v2.infra.files import Channel
+        from agents_chat.infra.files import Channel
         ch = Channel(tmp_path / "general.jsonl", "general")
         ch.append(from_="alice", content="hello", type="mention")
         assert ch.path.exists()
@@ -138,7 +138,7 @@ class TestV2FilesystemComponents:
         assert len(msgs) == 1
 
     def test_mailbox_pathlib(self, tmp_path):
-        from agents_chat.v2.infra.files import Mailbox
+        from agents_chat.infra.files import Mailbox
         mb = Mailbox(tmp_path / "agent1.json", "agent1")
         mb.append(ref_msg_id="ch_1", type="mention", content="@agent1 hi", channel="general")
         assert mb.path.exists()
@@ -146,7 +146,7 @@ class TestV2FilesystemComponents:
         assert len(pending) == 1
 
     def test_lock_pathlib(self, tmp_path):
-        from agents_chat.v2.infra.files import acquire, release
+        from agents_chat.infra.files import acquire, release
         lock_path = tmp_path / "task_1.lock"
         assert acquire(lock_path, "agent1") is True
         assert lock_path.exists()
@@ -154,8 +154,8 @@ class TestV2FilesystemComponents:
         assert not lock_path.exists()
 
     def test_agent_creates_all_dirs_via_pathlib(self, tmp_path):
-        from agents_chat.v2.core.agent import Agent
-        from agents_chat.v2.infra.cli import MockCLI
+        from agents_chat.core.agent import Agent
+        from agents_chat.infra.cli import MockCLI
         Agent(agent_id="qwencode", cli=MockCLI(), data_dir=tmp_path)
         assert (tmp_path / "mailboxes").exists()
         assert (tmp_path / "channels").exists()
@@ -169,7 +169,7 @@ class TestV2CliShutilWhich:
     """OpenCodeCLI 应该用 shutil.which() 找 CLI 路径."""
 
     def test_finds_existing_binary(self):
-        from agents_chat.v2.infra.cli import _find_cli
+        from agents_chat.infra.cli import _find_cli
         import shutil
         existing = shutil.which("echo") or shutil.which("ls")
         if existing:
@@ -177,7 +177,7 @@ class TestV2CliShutilWhich:
             assert found == existing
 
     def test_raises_for_nonexistent(self):
-        from agents_chat.v2.infra.cli import _find_cli
+        from agents_chat.infra.cli import _find_cli
         with pytest.raises(FileNotFoundError) as exc_info:
             _find_cli("definitely_not_a_real_binary_xyz12345")
         assert "not found" in str(exc_info.value)
@@ -189,8 +189,8 @@ class TestWorkspacePathWindowsStyle:
 
     def test_workspace_md_with_windows_path(self, tmp_path):
         """workspace_dir = Windows 风格路径 → Agent 仍能 create <cli>.md."""
-        from agents_chat.v2.core.agent import Agent
-        from agents_chat.v2.infra.cli import MockCLI
+        from agents_chat.core.agent import Agent
+        from agents_chat.infra.cli import MockCLI
         # POSIX 平台: 用 forward-slash C:/Users/... 形式 (Path 自动适配)
         # 这种形式在 Windows 上 Path 会正常解析
         workspace = tmp_path / "win_workspace"

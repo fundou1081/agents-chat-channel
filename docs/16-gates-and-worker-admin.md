@@ -30,7 +30,7 @@ Gate 三种行为:
 ## 2. Gate API
 
 ```python
-from agents_chat.v2.gates import (
+from agents_chat.gates import (
     Gate, GateResult, GateChain,
     MaxLengthGate, SecretLeakGate, ControlCharsGate,
 )
@@ -111,7 +111,7 @@ r = g.check_input("line1\nline2\ttab\x00null")
 
 `Agent.__init__` 加两个参数:
 ```python
-from agents_chat.v2.gates import MaxLengthGate, SecretLeakGate, ControlCharsGate
+from agents_chat.gates import MaxLengthGate, SecretLeakGate, ControlCharsGate
 
 agent = Agent(
     agent_id="gated",
@@ -152,7 +152,7 @@ Input/output gate 拒绝时:
 
 ---
 
-## 6. 测试覆盖 (`tests/unit/v2/test_gates.py`)
+## 6. 测试覆盖 (`tests/unit/runtime/test_gates.py`)
 
 25+ tests:
 - `TestGateResult`: 2 (allow/deny 构造)
@@ -197,7 +197,7 @@ Input/output gate 拒绝时:
 ### 7.3 用法
 
 ```python
-from agents_chat.v2.files.channel import Channel
+from agents_chat.files.channel import Channel
 
 ch = Channel("data/channels/general.jsonl", "general")
 ch.add_member("user_alice")           # 人类用户
@@ -231,7 +231,7 @@ ch.remove_admin("worker_bot", is_worker=True)
 - 老 `admins` 列表里的内容**当作 worker admin** (跟以前行为一致)
 - 损坏的 JSON 文件 fallback 到默认值, 不抛异常
 
-### 7.6 测试覆盖 (`tests/unit/v2/test_worker_admin.py`)
+### 7.6 测试覆盖 (`tests/unit/runtime/test_worker_admin.py`)
 
 18+ tests:
 - `TestChannelAdminBasic`: 8 (add_admin 默认/显式/human/重复/自动 member/human 不 member/混合)

@@ -34,7 +34,7 @@ FastAPI Server for v2.0 — HTTP API + WebUI 静态文件.
   GET  /webui/*                     WebUI (./webui/)
 
 启动:
-  python -m agents_chat.v2.server --port 8765 --data-dir ./data_v2
+  python -m agents_chat.server --port 8765 --data-dir ./data_v2
 """
 from __future__ import annotations
 
@@ -493,7 +493,7 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
         log_path = data_dir / "logs" / f"{agent_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         p = subprocess.Popen(
-            [sys.executable, "-m", "agents_chat.v2.main",
+            [sys.executable, "-m", "agents_chat.main",
              "--data-dir", str(data_dir),
              "run-worker", agent_id],
             stdout=open(log_path, "a"),

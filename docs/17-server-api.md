@@ -13,7 +13,7 @@
 
 启动:
 ```bash
-python -m agents_chat.v2.server --port 8765 --data-dir ./data_v2
+python -m agents_chat.server --port 8765 --data-dir ./data_v2
 # → http://127.0.0.1:8765/docs  (OpenAPI 自动文档)
 ```
 
@@ -57,16 +57,16 @@ python -m agents_chat.v2.server --port 8765 --data-dir ./data_v2
 +================================================================+
 |                  Worker / Scanner / Scheduler                  |
 |                                                                |
-|  python -m agents_chat.v2.main run-agent <id> --cli mock       |
-|  python -m agents_chat.v2.main run-scanner                     |
-|  python -m agents_chat.v2.main run-scheduler                   |
+|  python -m agents_chat.main run-agent <id> --cli mock       |
+|  python -m agents_chat.main run-scanner                     |
+|  python -m agents_chat.main run-scheduler                   |
 +================================================================+
 ```
 
 **关键设计**:
 - **ProcessManager 是 in-process** — 跟 server 同生命周期, lifespan 退出时停所有进程
 - **subprocess 独立进程** — 跟 v2.0 file bus 设计一致 (multi-process via JSONL)
-- **PYTHONPATH 自动设置** — 子进程能找到 `agents_chat.v2.main` 模块
+- **PYTHONPATH 自动设置** — 子进程能找到 `agents_chat.main` 模块
 
 ---
 
@@ -146,13 +146,13 @@ python -m agents_chat.v2.server --port 8765 --data-dir ./data_v2
 
 ```bash
 # 默认 127.0.0.1:8765 + ./data_v2
-python -m agents_chat.v2.server
+python -m agents_chat.server
 
 # 自定义端口 + data_dir
-python -m agents_chat.v2.server --port 9000 --data-dir ./my_data
+python -m agents_chat.server --port 9000 --data-dir ./my_data
 
 # dev mode (auto-reload)
-python -m agents_chat.v2.server --reload
+python -m agents_chat.server --reload
 ```
 
 ### 3.2 启动 agent
@@ -227,7 +227,7 @@ class ManagedProcess:
 
 **Agent**:
 ```bash
-python -m agents_chat.v2.main run-agent <agent_id> \
+python -m agents_chat.main run-agent <agent_id> \
   --cli <mock|qwen|opencode> \
   --data-dir <DATA_DIR> \
   --channel <CHANNEL> \
@@ -239,14 +239,14 @@ python -m agents_chat.v2.main run-agent <agent_id> \
 
 **Scanner**:
 ```bash
-python -m agents_chat.v2.main run-scanner \
+python -m agents_chat.main run-scanner \
   --data-dir <DATA_DIR> \
   --scan-interval <SEC>
 ```
 
 **Scheduler**:
 ```bash
-python -m agents_chat.v2.main run-scheduler \
+python -m agents_chat.main run-scheduler \
   --data-dir <DATA_DIR>
 ```
 
@@ -262,7 +262,7 @@ python -m agents_chat.v2.main run-scheduler \
       "agent_id": "buyer-fish",
       "cli": "opencode",
       "pid": 12345,
-      "cmd": ["python", "-m", "agents_chat.v2.main", "run-agent", "..."],
+      "cmd": ["python", "-m", "agents_chat.main", "run-agent", "..."],
       "log_path": "/data_v2/logs/agent_buyer-fish_1780900000.log",
       "started_at": "2026-06-08T06:32:31+00:00",
       "stopped_at": "",
@@ -321,7 +321,7 @@ stop(process_id):
 
 | 调用 | 影响 |
 |------|------|
-| `python -m agents_chat.v2.main run-agent <id>` | **没变** — server 用同一个命令 |
+| `python -m agents_chat.main run-agent <id>` | **没变** — server 用同一个命令 |
 | `data_v2/processes.json` | 新增, 不影响其他数据 |
 | `data_v2/logs/` | 新增, `.gitignore` 已加 |
 | 老 `examples/e2e_*.sh` 脚本 | **没变** — 还是直接调 main.py |
@@ -330,7 +330,7 @@ stop(process_id):
 
 ---
 
-## 7. 测试覆盖 (`tests/unit/v2/test_server.py`)
+## 7. 测试覆盖 (`tests/unit/runtime/test_server.py`)
 
 40 tests:
 - `TestHealth`: 2 (root / health)

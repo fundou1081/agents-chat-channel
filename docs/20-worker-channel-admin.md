@@ -12,7 +12,7 @@
 ### API
 
 ```python
-from agents_chat.v2.files.channel import Channel
+from agents_chat.files.channel import Channel
 
 ch = Channel("./data_v2/channels/fish-market.jsonl", "fish-market")
 
@@ -98,8 +98,8 @@ WorkerFactory 统一创建 Agent 实例, 支持多种 CLI 后端.
 ### 注册新 CLI
 
 ```python
-from agents_chat.v2.worker_factory import register_cli
-from agents_chat.v2.cli.base import CLI
+from agents_chat.worker_factory import register_cli
+from agents_chat.cli.base import CLI
 
 class ClaudeCLI(CLI):
     name = "claude"
@@ -112,7 +112,7 @@ register_cli("claude", ClaudeCLI)
 ### 创建 Worker
 
 ```python
-from agents_chat.v2.worker_factory import WorkerFactory, list_clis
+from agents_chat.worker_factory import WorkerFactory, list_clis
 
 # 单个创建
 worker = WorkerFactory.create(
@@ -169,7 +169,7 @@ ch.add_admin("god")
 ch.set_enabled_workers(["seller-fish", "buyer-fish"])
 
 # 2. WorkerFactory: 创建 workers
-from agents_chat.v2.worker_factory import WorkerFactory
+from agents_chat.worker_factory import WorkerFactory
 workers = WorkerFactory.create_all({
     "seller-fish": {"cli_type": "opencode", "subscriptions": ["fish-market"]},
     "buyer-fish": {"cli_type": "opencode", "subscriptions": ["fish-market"]},
@@ -203,7 +203,7 @@ workspaces/{agent_id}/
 `WorkerFactory.create(init_workspace=True)` 时自动调用:
 
 ```python
-from agents_chat.v2.worker_factory import WorkerFactory
+from agents_chat.worker_factory import WorkerFactory
 
 worker = WorkerFactory.create(
     agent_id="seller-fish",

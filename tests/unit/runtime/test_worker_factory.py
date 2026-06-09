@@ -7,13 +7,13 @@ import sys, os, tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../..", "src"))
 
-from agents_chat.v2.infra.worker_factory import (
+from agents_chat.infra.worker_factory import (
     WorkerFactory,
     register_cli,
     list_clis,
     get_cli_class,
 )
-from agents_chat.v2.infra.cli import CLI
+from agents_chat.infra.cli import CLI
 
 
 class DummyCLI:
@@ -21,7 +21,7 @@ class DummyCLI:
     name = "dummy"
 
     async def execute(self, prompt, session_id=None, workspace_dir=None):
-        from agents_chat.v2.infra.cli import CLIResponse
+        from agents_chat.infra.cli import CLIResponse
         return CLIResponse(output_text="dummy", new_session_id="s_dummy", raw="dummy")
 
 

@@ -1,7 +1,7 @@
 """Tests for v2.0 single-line STATUS 格式 (Claude Code 风格)."""
 import pytest
 
-from agents_chat.v2.core.status import (
+from agents_chat.core.status import (
     Status,
     format_status,
     format_status_block,

@@ -14,7 +14,7 @@ Gates for v2.0 — Worker 输入/输出过滤.
   - 可观测: 每个 gate 有 name, 拒绝时 log + 写频道
 
 用法 (在 main.py 启动时):
-    from agents_chat.v2.gates import MaxLengthGate, SecretLeakGate
+    from agents_chat.infra.gates import MaxLengthGate, SecretLeakGate
     scheduler = EventHandler(
         ...,
         input_gates=[MaxLengthGate(max_chars=4000)],

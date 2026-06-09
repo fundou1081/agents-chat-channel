@@ -23,7 +23,7 @@ dev = [
 ]
 
 [project.scripts]
-agents-chat = "agents_chat.v2.infra.main:main"
+agents-chat = "agents_chat.infra.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
