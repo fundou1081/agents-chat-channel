@@ -103,10 +103,17 @@ class Mailbox:
             data.setdefault("pending", []).append(msg)
             self._write_atomic(data)
 
-        # 事件驱动: 进程内立即 emit, 跨进程靠 FileBusWatcher
+        # 事件驱动 3 层 (跟 Channel.append() 同结构)
         try:
             from ..events import get_event_bus, mailbox_event
             get_event_bus().emit(mailbox_event(self.agent_id))
+        except Exception:
+            pass
+        # 跨进程 busd 广播 (mailboxes/ -> data_dir)
+        try:
+            from ..socket_bus import emit_to_bus
+            data_dir = self.path.parent.parent
+            emit_to_bus(str(data_dir), f"mailbox:{self.agent_id}:new")
         except Exception:
             pass
 

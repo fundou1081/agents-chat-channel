@@ -98,8 +98,49 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         print(f"[server] ▶ http://{host}:{port}  data_dir={data_dir}")
-        yield
-        print("[server] ⏹ stopped")
+
+        # 启 busd daemon (跟 server 同生命周期)
+        busd_proc = None
+        try:
+            import subprocess
+            from .busd import DEFAULT_SOCK_NAME
+            sock_path = data_dir / DEFAULT_SOCK_NAME
+            busd_proc = subprocess.Popen(
+                [sys.executable, "-m", "agents_chat.infra.busd",
+                 "--data-dir", str(data_dir),
+                 "--socket", str(sock_path)],
+                stdout=subprocess.DEVNULL,  # 不输出到 server stdout
+                stderr=subprocess.DEVNULL,
+            )
+            # 等 busd 写 path 文件 (短轮询, max 2s)
+            for _ in range(20):
+                if (data_dir / "busd.sock.path").exists():
+                    break
+                time.sleep(0.1)
+            print(f"[server] busd spawned (pid={busd_proc.pid}, sock={sock_path})")
+        except Exception as e:
+            print(f"[server] busd spawn failed: {e} (降级: 仅 watchdog + poll)")
+            busd_proc = None
+
+        try:
+            yield
+        finally:
+            # 关闭时: 先关 busd, 再清理 socket path
+            if busd_proc is not None and busd_proc.poll() is None:
+                try:
+                    busd_proc.terminate()
+                    busd_proc.wait(timeout=2.0)
+                except Exception:
+                    try:
+                        busd_proc.kill()
+                    except Exception:
+                        pass
+            # 清理 path 文件
+            try:
+                (data_dir / "busd.sock.path").unlink()
+            except OSError:
+                pass
+            print("[server] ⏹ stopped (busd cleaned)")
 
     app = FastAPI(
         title="agents-chat-channel v2.0 Server",

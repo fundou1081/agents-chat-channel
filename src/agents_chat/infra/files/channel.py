@@ -331,13 +331,21 @@ class Channel:
         # trim if max_messages exceeded
         self._trim()
 
-        # 事件驱动: 进程内立即 emit, 跨进程靠 FileBusWatcher
-        # (延迟: 进程内 < 1ms, 跨进程 < 50ms via watchdog)
+        # 事件驱动 3 层:
+        #   1) 进程内 EventBus (同进程其他 agent 立即看到)     < 1μs
+        #   2) 跨进程 SocketBus (busd 广播)                  < 1ms
+        #   3) 跨进程 FileBusWatcher (watchdog 兑底)          < 50ms
         try:
             from ..events import get_event_bus, channel_event
             get_event_bus().emit(channel_event(self.name))
         except Exception:
-            # 事件总线失败不影响主流程
+            pass
+        # 跨进程 busd 广播 (从 path 反推 data_dir: channels/ -> data_dir)
+        try:
+            from ..socket_bus import emit_to_bus
+            data_dir = self.path.parent.parent  # channels/foo.jsonl -> data_dir
+            emit_to_bus(str(data_dir), f"channel:{self.name}:new")
+        except Exception:
             pass
 
         return msg_id
