@@ -133,6 +133,9 @@ def get_cli_class(name: str) -> Type[CLI] | None:
 register_cli("opencode", OpenCodeCLI)
 register_cli("qwen", QwenCLI)
 register_cli("mock", MockCLI)
+# a2a: 调外部 A2A agent (LangChain/CrewAI/AutoGen 等)
+from .cli.a2a import A2AClient
+register_cli("a2a", A2AClient)
 # claude: 待实现 (ClaudeCLI)
 
 
@@ -234,6 +237,20 @@ class WorkerFactory:
                 timeout_seconds=cli_extra.get("timeout_seconds", 60),
                 base_url=cli_extra.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
                 api_key=cli_extra.get("api_key", ""),
+            )
+        elif cli_type == "a2a":
+            # A2A client: 调外部 A2A server
+            # cli_config 字段: a2a_url (必填), a2a_api_key (可选), timeout (可选)
+            a2a_url = cli_extra.get("a2a_url")
+            if not a2a_url:
+                raise ValueError(
+                    f"A2AClient 需要 cli_config.a2a_url (e.g. 'https://external-agent.com')"
+                )
+            cli = cli_class(
+                agent_url=a2a_url,
+                api_key=cli_extra.get("a2a_api_key", ""),
+                timeout=cli_extra.get("timeout", 30.0),
+                workspace_dir=str(workspace_dir),
             )
         else:
             cli = cli_class(**cli_extra)

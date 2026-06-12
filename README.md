@@ -6,7 +6,7 @@
 > 4 组件 PDR 架构 (Perceive-Decide-Remember-Act) · 文件总线 · FastAPI + WebUI 控制台 · 23 个 CLI 适配 (opencode/qwen/mock)
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-347%20passed-brightgreen.svg)](tests/unit/runtime/)
+[![Tests](https://img.shields.io/badge/tests-370%20passed-brightgreen.svg)](tests/unit/runtime/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
 [![Architecture: PDR](https://img.shields.io/badge/architecture-PDR-orange.svg)](docs/15-v2-architecture-overview.md)
 
@@ -222,7 +222,7 @@ agents-chat-channel/
 ```bash
 # 全部测试
 .venv/bin/python -m pytest tests/unit/ -q
-# → 347 passed, 2 warnings in 116.48s
+# → 370 passed, 2 warnings in 117.48s
 
 # 只跑 runtime tests
 .venv/bin/python -m pytest tests/unit/runtime/ -q
@@ -244,6 +244,8 @@ agents-chat-channel/
 5. [docs/17-server-api.md](docs/17-server-api.md) — Server API 完整参考
 6. [docs/21-event-driven-bus.md](docs/21-event-driven-bus.md) — 事件驱动总线 (EventBus + watchdog)
 7. [docs/22-uds-bus.md](docs/22-uds-bus.md) — UDS 内存 bus (busd, 跟 server 同生命周期)
+8. [docs/23-a2a-research.md](docs/23-a2a-research.md) — A2A 协议调研 (770 行)
+9. [docs/24-a2a-client.md](docs/24-a2a-client.md) — A2A Client 集成 (worker 调外部 A2A agent)
 
 ---
 
@@ -253,11 +255,11 @@ agents-chat-channel/
 - **⚡ Event-Driven Bus (3 层)** — 进程内 `asyncio.Event` (< 1μs) + 跨进程 UDS `busd` (0.01-1ms) + 跨进程 `watchdog` 兜底 (< 50ms), 替代 1s 轮询 — 详见 [docs/21-event-driven-bus.md](docs/21-event-driven-bus.md) + [docs/22-uds-bus.md](docs/22-uds-bus.md)
 - **📁 文件总线** — 全部状态在文件系统, 没有数据库, 易调试 / 易回滚 / 易分布式
 - **🔄 两种模式** — Passive (god 控制) + Proactive (agent 自主), 同一套 API
-- **🔌 3 个 CLI 适配** — Mock (测试) + OpenCode (本地 LLM) + Qwen (云端), 切换无侵入
+- **🔌 4 个 CLI 适配** — Mock (测试) + OpenCode (本地 LLM) + Qwen (云端) + **A2A (调外部 LangChain/CrewAI/AutoGen)**, 切换无侵入
 - **🌐 FastAPI + WebUI** — 实时监控面板, 6 个视图覆盖所有 team 协作场景
 - **🛡️ Worker Gates** — 输入/输出 Gate 链 (长度限制 / 密钥过滤 / 等等)
 - **📊 StateBoard** — 跨频道任务跟踪, 任务认领用文件锁
-- **🧪 347 测试** — 单元测试覆盖核心 (含 40 个 event-driven 测试), e2e 跑真实 LLM
+- **🧪 370 测试** — 单元测试覆盖核心 (含 40 个 event-driven + 23 个 A2A), e2e 跑真实 LLM
 
 ---
 
