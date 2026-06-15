@@ -161,6 +161,49 @@ def cmd_validate(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_visualize(args: argparse.Namespace) -> None:
+    """生成 DAG + stage 状态 HTML 页面."""
+    from ..workflow import load_workflow, WorkflowRunResult
+    from ..workflow.html_report import render_and_save_html
+
+    yaml_path = Path(args.yaml_path).resolve()
+    data_dir = Path(args.data_dir).resolve() if args.data_dir else Path("./data_v2")
+
+    # 加载 workflow
+    try:
+        spec = load_workflow(yaml_path)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"❌ 加载 workflow 失败: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # 尝试加载 run result (如果指定了 run_id)
+    result = None
+    if args.run_id:
+        run_file = data_dir / "runs" / f"{args.run_id}.json"
+        if run_file.exists():
+            import json
+            try:
+                data = json.loads(run_file.read_text("utf-8"))
+                result = WorkflowRunResult(
+                    workflow_name=data.get("workflow_name", spec.name),
+                    run_id=data.get("run_id", args.run_id),
+                    status=data.get("status", "unknown"),
+                    started_at=data.get("started_at"),
+                    finished_at=data.get("finished_at"),
+                    failed_stage=data.get("failed_stage"),
+                    stage_states=data.get("stage_states", {}),
+                )
+            except (json.JSONDecodeError, KeyError):
+                pass
+
+    # 输出
+    output_path = args.output or f"workflow-{spec.name}.html"
+    render_and_save_html(spec, output_path, result)
+    print(f"📋 {spec.name}: {len(spec.stages)} stages")
+    if result:
+        print(f"   Run: {result.run_id} [{result.status}]")
+
+
 # =============================================================================
 # Parser registration (called from infra/main.py)
 # =============================================================================
@@ -199,3 +242,11 @@ def register_workflow_parser(subparsers: argparse._SubParsersAction) -> None:
     p_validate = wf_sub.add_parser("validate", help="验证 pipeline YAML 语法")
     p_validate.add_argument("yaml_path", help="Pipeline YAML 文件路径")
     p_validate.set_defaults(cmd="workflow-validate")
+
+    # ---- workflow visualize ----
+    p_viz = wf_sub.add_parser("visualize", help="生成 DAG + stage 状态 HTML 页面")
+    p_viz.add_argument("yaml_path", help="Pipeline YAML 文件路径")
+    p_viz.add_argument("--run-id", default=None, help="Run ID (可选, 有则显示 status)")
+    p_viz.add_argument("--output", "-o", default=None, help="输出文件路径 (默认 workflow-<name>.html)")
+    p_viz.add_argument("--data-dir", default=os.environ.get("AGENTS_CHAT_DATA_DIR", "./data_v2"))
+    p_viz.set_defaults(cmd="workflow-visualize")

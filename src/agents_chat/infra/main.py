@@ -30,7 +30,7 @@ from ..infra.cli.qwen import QwenCLI
 from ..infra.files.channel import Channel
 from ..infra.files.mailbox import Mailbox
 from ..infra.state_board import StateBoard
-from ..workflow.cli import register_workflow_parser, cmd_run, cmd_list_runs, cmd_status as wf_cmd_status, cmd_validate
+from ..workflow.cli import register_workflow_parser, cmd_run, cmd_list_runs, cmd_status as wf_cmd_status, cmd_validate, cmd_visualize
 
 
 # =============================================================================
@@ -274,6 +274,8 @@ def main(argv: list[str] | None = None):
         wf_cmd_status(args)
     elif args.cmd == "workflow-validate":
         cmd_validate(args)
+    elif args.cmd == "workflow-visualize":
+        cmd_visualize(args)
 
 
 if __name__ == "__main__":
