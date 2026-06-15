@@ -224,6 +224,7 @@ class WorkflowScheduler:
 
         # 持久化
         self.result.finished_at = datetime.now(timezone.utc).isoformat()
+        self.result.check_results = dict(self._stage_check_results)
         self._save_run_state()
         return self.result
 
