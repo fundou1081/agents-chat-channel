@@ -1,0 +1,53 @@
+name: smoke-test-pipeline
+description: "3 stage pipeline for smoke testing"
+stages:
+  - id: research
+    workers:
+      - id: r-writer
+        cli: mock
+        system_prompt: |
+          你是 research agent.
+          分析 {input.topic} 并产出结构化 JSON.
+    deliverable:
+      path: out/research.json
+      min_size: 10
+      checks:
+        - '"findings"'
+        - type: contains
+          value: '"sources"'
+
+  - id: write
+    depends_on: [research]
+    workers:
+      - id: w-writer
+        cli: mock
+        system_prompt: |
+          基于 {input.findings} 写报告.
+          报告包含: ## Summary 和 ## Recommendations.
+      - id: w-reviewer
+        cli: mock
+        system_prompt: |
+          审阅并修改报告.
+    deliverable:
+      path: out/report.md
+      min_size: 50
+      checks:
+        - "## Summary"
+        - "## Recommendations"
+        - type: min_keywords
+          keywords: ["分析", "结论", "建议"]
+          min_count: 2
+
+  - id: publish
+    depends_on: [write]
+    workers:
+      - id: p-publisher
+        cli: mock
+        system_prompt: |
+          格式化并发布报告.
+    deliverable:
+      path: out/final.md
+      min_size: 100
+      checks:
+        - type: contains_all
+          value: ["## Summary", "## Recommendations", "## 结论"]

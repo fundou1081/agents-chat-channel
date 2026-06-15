@@ -30,6 +30,7 @@ from ..infra.cli.qwen import QwenCLI
 from ..infra.files.channel import Channel
 from ..infra.files.mailbox import Mailbox
 from ..infra.state_board import StateBoard
+from ..workflow.cli import register_workflow_parser, cmd_run, cmd_list_runs, cmd_status as wf_cmd_status, cmd_validate
 
 
 # =============================================================================
@@ -243,6 +244,9 @@ def main(argv: list[str] | None = None):
     p_reset = sub.add_parser("reset", help="重置 sessions/mailboxes (危险)")
     p_reset.set_defaults(cmd="reset")
 
+    # workflow 子命令组
+    register_workflow_parser(sub)
+
     args = parser.parse_args(argv)
     if "cmd" not in args:
         parser.print_help()
@@ -262,6 +266,14 @@ def main(argv: list[str] | None = None):
         cmd_inbox(args)
     elif args.cmd == "reset":
         cmd_reset(args)
+    elif args.cmd == "workflow-run":
+        cmd_run(args)
+    elif args.cmd == "workflow-list-runs":
+        cmd_list_runs(args)
+    elif args.cmd == "workflow-status":
+        wf_cmd_status(args)
+    elif args.cmd == "workflow-validate":
+        cmd_validate(args)
 
 
 if __name__ == "__main__":
