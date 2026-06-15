@@ -65,6 +65,10 @@
         <li class="nav-item" data-view="mailboxes">
           <span class="icon">📥</span> 邮箱
         </li>
+        <li class="nav-item" data-view="workflows">
+          <span class="icon">⚙️</span> Workflows
+          <span class="badge" id="badge-workflows">0</span>
+        </li>
       </ul>
 
       <div class="sidebar-section">
@@ -178,6 +182,20 @@
           <h2>📥 邮箱 <span class="view-subtitle">Worker 收件箱</span></h2>
         </div>
         <div id="mailboxes-content">
+          <div class="loading">加载中...</div>
+        </div>
+      </section>
+
+      <!-- Workflows -->
+      <section id="view-workflows" class="view">
+        <div class="view-header">
+          <h2>⚙️ Workflows <span class="view-subtitle">Stage-Isolated DAG 编排</span></h2>
+          <div class="view-actions">
+            <button class="btn btn-primary" onclick="showNewWorkflowModal()">+ 跑 Workflow</button>
+            <button class="btn" onclick="refreshWorkflows()">🔄 刷新</button>
+          </div>
+        </div>
+        <div id="workflows-content">
           <div class="loading">加载中...</div>
         </div>
       </section>
@@ -299,6 +317,29 @@
         <button class="btn btn-warn" onclick="stopWorkerFromModal()">⏹ 停止</button>
         <button class="btn" onclick="startWorkerFromModal()">▶ 启动</button>
         <button class="btn" onclick="closeWorkerDetail()">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Run Workflow modal -->
+  <div id="new-workflow-modal" class="modal hidden">
+    <div class="modal-content">
+      <h3>⚙️ 跑 Workflow</h3>
+      <div class="form-row">
+        <label>Pipeline YAML 路径:</label>
+        <input type="text" id="wf-yaml" placeholder="examples/smoke-test-pipeline.yaml" value="examples/smoke-test-pipeline.yaml">
+      </div>
+      <div class="form-row">
+        <label>从 Stage 开始 (可选):</label>
+        <input type="text" id="wf-from-stage" placeholder="留空 = 全部">
+      </div>
+      <div class="form-row">
+        <label>单 Stage 重跑 (可选):</label>
+        <input type="text" id="wf-single-stage" placeholder="留空 = 全部">
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-primary" onclick="runWorkflow()">▶ 启动</button>
+        <button class="btn" onclick="closeWorkflowModal()">取消</button>
       </div>
     </div>
   </div>

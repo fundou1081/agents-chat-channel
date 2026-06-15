@@ -43,13 +43,15 @@ import json
 import os
 import sys
 import time
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, Body
+from fastapi import FastAPI, HTTPException, Query, Body, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -85,6 +87,12 @@ class AddAdminRequest(BaseModel):
 # =============================================================================
 # App Factory
 # =============================================================================
+
+
+class RunWorkflowRequest(BaseModel):
+    yaml_path: str  # YAML 文件路径 (相对于 data_dir 或绝对路径)
+    from_stage: Optional[str] = None
+    single_stage: Optional[str] = None
 
 
 def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> FastAPI:
@@ -841,6 +849,152 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
         }
 
     # -------------------------------------------------------------------------
+    # Workflow API (Stage-Isolated)
+    # -------------------------------------------------------------------------
+
+    @app.get("/api/workflows")
+    def list_workflow_runs(limit: int = Query(20, ge=1, le=100)):
+        """列所有 workflow runs (最近 N 条)."""
+        runs_dir = data_dir / "runs"
+        if not runs_dir.is_dir():
+            return {"runs": []}
+        run_files = sorted(
+            runs_dir.glob("run-*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        result = []
+        for rf in run_files[:limit]:
+            try:
+                data = json.loads(rf.read_text("utf-8"))
+                result.append(data)
+            except (json.JSONDecodeError, KeyError):
+                pass
+        return {"runs": result}
+
+    @app.get("/api/workflows/{run_id}")
+    def get_workflow_run(run_id: str):
+        """获取单个 workflow run 的详细状态."""
+        run_file = data_dir / "runs" / f"{run_id}.json"
+        if not run_file.exists():
+            raise HTTPException(status_code=404, detail=f"run '{run_id}' not found")
+        try:
+            return json.loads(run_file.read_text("utf-8"))
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=500, detail=f"invalid run file: {e}")
+
+    @app.post("/api/workflows/run")
+    async def run_workflow(
+        req: RunWorkflowRequest,
+        background_tasks: BackgroundTasks,
+    ):
+        """启动 workflow 跑 (异步, 返 run_id)."""
+        from ..workflow.loader import load_workflow
+        from ..workflow.scheduler import WorkflowScheduler
+
+        yaml_path = Path(req.yaml_path)
+        if not yaml_path.is_absolute():
+            yaml_path = data_dir / req.yaml
+        if not yaml_path.exists():
+            raise HTTPException(status_code=404, detail=f"YAML not found: {yaml_path}")
+
+        try:
+            spec = load_workflow(yaml_path)
+        except (ValueError, FileNotFoundError) as e:
+            raise HTTPException(status_code=400, detail=f"invalid workflow: {e}")
+
+        scheduler = WorkflowScheduler(
+            spec,
+            data_dir=data_dir,
+            from_stage=req.from_stage,
+            single_stage=req.single_stage,
+        )
+        # 在后台跑 (立即返 run_id)
+        background_tasks.add_task(_run_workflow_background, scheduler)
+        return {
+            "run_id": scheduler.run_id,
+            "workflow": spec.name,
+            "stages": len(spec.stages),
+            "from_stage": req.from_stage,
+            "single_stage": req.single_stage,
+        }
+
+    @app.post("/api/workflows/validate")
+    def validate_workflow(req: RunWorkflowRequest):
+        """验证 workflow YAML 语法 (不跑)."""
+        from ..workflow.loader import load_workflow
+
+        yaml_path = Path(req.yaml_path)
+        if not yaml_path.is_absolute():
+            yaml_path = data_dir / req.yaml
+        if not yaml_path.exists():
+            raise HTTPException(status_code=404, detail=f"YAML not found: {yaml_path}")
+
+        try:
+            spec = load_workflow(yaml_path)
+            stages = spec.topological_order()
+            return {
+                "valid": True,
+                "name": spec.name,
+                "description": spec.description,
+                "stages": [
+                    {
+                        "id": s.id,
+                        "workers": len(s.workers),
+                        "depends_on": s.depends_on,
+                        "timeout": s.timeout,
+                    }
+                    for s in stages
+                ],
+            }
+        except (ValueError, FileNotFoundError) as e:
+            return {"valid": False, "error": str(e)}
+
+    @app.get("/api/workflows/{run_id}/html")
+    def get_workflow_html(run_id: str):
+        """获取 workflow run 的 HTML 可视化 (DAG + status)."""
+        from ..workflow.loader import load_workflow
+        from ..workflow.scheduler import WorkflowRunResult
+        from ..workflow.html_report import render_workflow_html
+
+        # 加载 run 数据
+        run_file = data_dir / "runs" / f"{run_id}.json"
+        if not run_file.exists():
+            raise HTTPException(status_code=404, detail=f"run '{run_id}' not found")
+
+        try:
+            run_data = json.loads(run_file.read_text("utf-8"))
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=500, detail=f"invalid run file: {e}")
+
+        # 从 run 数据反推 WorkflowSpec (简化版)
+        result = WorkflowRunResult(
+            workflow_name=run_data.get("workflow_name", "?"),
+            run_id=run_data["run_id"],
+            status=run_data.get("status", "?"),
+            started_at=run_data.get("started_at"),
+            finished_at=run_data.get("finished_at"),
+            failed_stage=run_data.get("failed_stage"),
+            stage_states=run_data.get("stage_states", {}),
+        )
+
+        # HTML: 需要 spec → 从 stage_states 构造简化 DAG
+        from ..workflow.schema import WorkflowSpec, StageSpec, WorkerSpec, DeliverableSpec
+        stage_ids = list(run_data.get("stage_states", {}).keys())
+        if not stage_ids:
+            raise HTTPException(status_code=400, detail="no stage data in run")
+        
+        stages = [
+            StageSpec(id=sid, workers=[WorkerSpec(id=sid + "-w", cli="mock")], deliverable=DeliverableSpec(path="out/x.json"))
+            for sid in stage_ids
+        ]
+        spec = WorkflowSpec(name=run_data.get("workflow_name", "?"), stages=stages)
+
+        html = render_workflow_html(spec, result=result)
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(content=html)
+
+    # -------------------------------------------------------------------------
     # WebUI Static
     # -------------------------------------------------------------------------
 
@@ -850,6 +1004,12 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
         app.mount("/webui", StaticFiles(directory=str(webui_dir), html=True), name="webui")
 
     return app
+
+
+async def _run_workflow_background(scheduler):
+    """后台任务: 跑 workflow 并记录结果."""
+    from ..workflow.scheduler import WorkflowScheduler
+    await scheduler.run()
 
 
 # =============================================================================

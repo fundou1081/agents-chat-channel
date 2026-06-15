@@ -165,6 +165,7 @@ async function refresh() {
     case 'workers': await refreshWorkers(); break;
     case 'tasks': await refreshTasks(); break;
     case 'mailboxes': await refreshMailboxes(); break;
+    case 'workflows': await refreshWorkflows(); break;
   }
 
   await refreshBadges();
@@ -187,9 +188,16 @@ async function refreshBadges() {
     const bch = $('badge-channels');
     const bw = $('badge-workers');
     const bt = $('badge-tasks');
+    const bwf = $('badge-workflows');
     if (bch) bch.textContent = chs.length || '';
     if (bw) bw.textContent = ags.length || '';
     if (bt) bt.textContent = Object.keys(tasks).length || '';
+
+    // Workflow badge
+    try {
+      const wfr = await api('/api/workflows?limit=100');
+      if (bwf) bwf.textContent = (wfr.runs || []).length || '';
+    } catch (e) { /* silent */ }
   } catch (e) { /* silent */ }
 }
 
@@ -1223,6 +1231,119 @@ async function doReset() {
   } catch (e) { showToast('重置失败: ' + e.message, 'error'); }
 }
 window.doReset = doReset;
+
+
+// ============================================================
+// Workflows
+// ============================================================
+
+async function refreshWorkflows() {
+  const el = $('workflows-content');
+  if (!el) return;
+  try {
+    const data = await api('/api/workflows?limit=50');
+    const runs = data.runs || [];
+    if (runs.length === 0) {
+      el.innerHTML = '<div class="empty-state"><p>📭 暂无 Workflow 运行记录</p><p style="color:#888">点击"+ 跑 Workflow" 开始</p></div>';
+      return;
+    }
+    let html = '<div class="wf-runs">';
+    for (const r of runs) {
+      const icon = { success: '✅', failed: '❌', running: '🔄' }[r.status] || '•';
+      const started = (r.started_at || '').slice(0, 19);
+      const finished = (r.finished_at || '').slice(0, 19);
+      const fail = r.failed_stage ? ` at <span style="color:#c00">${r.failed_stage}</span>` : '';
+      
+      // Stage 状态条
+      let stageBar = '';
+      if (r.stage_states) {
+        for (const [sid, state] of Object.entries(r.stage_states)) {
+          const sicon = { success: '🟢', failed: '🔴', running: '🔵' }[state] || '⚪';
+          stageBar += `<span class="wf-stage-badge ${state}" title="${sid}: ${state}">${sicon} ${sid}</span>`;
+        }
+      }
+
+      // Checks 摘要
+      let checksHtml = '';
+      if (r.check_results) {
+        for (const [sid, cr] of Object.entries(r.check_results)) {
+          if (cr.all_passed === undefined) continue;
+          const cicon = cr.all_passed ? '✅' : '❌';
+          checksHtml += `<span class="wf-check-badge" title="${sid}: ${cr.items?.length || 0} checks">${cicon} ${sid}</span>`;
+        }
+      }
+
+      html += `
+        <div class="wf-run-card">
+          <div class="wf-run-header">
+            <strong>${icon} ${r.workflow_name}</strong>
+            <span class="wf-run-id">${r.run_id}</span>
+          </div>
+          <div class="wf-run-meta">
+            <span>Started: ${started}</span>
+            <span>Finished: ${finished || '—'}</span>
+            <span>Status: <strong class="wf-status-${r.status}">${r.status.toUpperCase()}${fail}</strong></span>
+          </div>
+          ${stageBar ? `<div class="wf-stage-bar">${stageBar}</div>` : ''}
+          ${checksHtml ? `<div class="wf-checks">${checksHtml}</div>` : ''}
+          <div class="wf-run-actions">
+            <button class="btn btn-sm" onclick="viewWorkflowHTML('${r.run_id}')">📊 可视化</button>
+          </div>
+        </div>`;
+    }
+    html += '</div>';
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = '<div class="error">加载失败: ' + e.message + '</div>';
+  }
+}
+
+function showNewWorkflowModal() {
+  const modal = $('new-workflow-modal');
+  if (modal) modal.classList.remove('hidden');
+}
+
+function closeWorkflowModal() {
+  const modal = $('new-workflow-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function runWorkflow() {
+  const yaml = $('wf-yaml')?.value?.trim();
+  if (!yaml) { showToast('请输入 YAML 路径', 'error'); return; }
+
+  const fromStage = $('wf-from-stage')?.value?.trim() || null;
+  const singleStage = $('wf-single-stage')?.value?.trim() || null;
+
+  try {
+    const result = await api('/api/workflows/run', {
+      method: 'POST',
+      body: JSON.stringify({ yaml, from_stage: fromStage, single_stage: singleStage }),
+    });
+    showToast(`Workflow 启动: ${result.run_id} (${result.workflow}, ${result.stages} stages)`);
+    closeWorkflowModal();
+    setTimeout(() => refresh(), 2000);
+  } catch (e) {
+    showToast('启动失败: ' + e.message, 'error');
+  }
+}
+
+async function viewWorkflowHTML(run_id) {
+  try {
+    const html = await api('/api/workflows/' + run_id + '/html');
+    const w = window.open('', '_blank');
+    w.document.write(html);
+    w.document.close();
+  } catch (e) {
+    showToast('加载可视化失败: ' + e.message, 'error');
+  }
+}
+
+window.refreshWorkflows = refreshWorkflows;
+window.showNewWorkflowModal = showNewWorkflowModal;
+window.closeWorkflowModal = closeWorkflowModal;
+window.runWorkflow = runWorkflow;
+window.viewWorkflowHTML = viewWorkflowHTML;
 
 // ============================
 // 启动
