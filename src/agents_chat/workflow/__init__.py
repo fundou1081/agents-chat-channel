@@ -20,16 +20,35 @@ from .schema import (
     CheckResult,
     CheckItem,
 )
-from .loader import load_workflow
+from .loader import load_workflow, load_workflow_from_string
 from .checks import evaluate_checks
+from .runner import (
+    build_system_prompt,
+    collect_upstream_inputs,
+    spawn_stage_workers,
+    build_channel_name,
+    build_input_handoff_paths,
+)
+from .scheduler import WorkflowScheduler, WorkflowRunResult
 
 __all__ = [
+    # Schema
     "DeliverableSpec",
     "WorkerSpec",
     "StageSpec",
     "WorkflowSpec",
     "CheckResult",
     "CheckItem",
+    # Loader + checks
     "load_workflow",
     "evaluate_checks",
+    # Runner
+    "build_system_prompt",
+    "collect_upstream_inputs",
+    "spawn_stage_workers",
+    "build_channel_name",
+    "build_input_handoff_paths",
+    # Scheduler
+    "WorkflowScheduler",
+    "WorkflowRunResult",
 ]
