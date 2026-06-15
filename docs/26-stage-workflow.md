@@ -159,7 +159,7 @@
 
 ## 4. YAML Schema 详细设计
 
-### 4.1 完整示例 (`pipeline.yaml`)
+### 4.1 完整示例 (`pipeline.yaml`) — **v2 schema (checks 合并 + path/paths/dir)**
 
 ```yaml
 name: research-pipeline
@@ -170,7 +170,7 @@ version: "1.0"
 stages:
   - id: research
     description: "并行调研"
-    timeout: 600  # 秒, 10 分钟
+    timeout: 600
     workers:
       - id: researcher-1
         cli: opencode
@@ -178,28 +178,26 @@ stages:
         system_prompt: |
           你是 researcher-1. 负责搜索权威资料.
           关注 {input.topic} 的核心论点和数据来源.
-        # 启动时, 自动从 input 加载 (上游 stage 交付的 deliverable)
       - id: researcher-2
         cli: opencode
         model: opencode/deepseek-v4-flash-free
         system_prompt: |
           你是 researcher-2. 负责交叉验证.
           找 {input.topic} 的反方观点, 反驳 researcher-1 的结论.
-    # deliverable: stage 跑完产出
+    # v2 deliverable: checks 合并 (declarative + scheduler 轻校验)
     deliverable:
-      path: data/findings.json
-      format: json
-      schema:  # 可选, JSON Schema
-        type: object
-        required: [sources, claims, counterpoints]
-        properties:
-          sources: {type: array, items: {type: string}}
-          claims: {type: array, items: {type: string}}
-          counterpoints: {type: array, items: {type: string}}
+      path: data/findings.md          # 单文件
+      format: markdown               # hint (不强制)
+      checks:                        # 统一检查列表 (worker 提示 + scheduler 校验)
+        - "至少 3 个权威来源"        # 启发式: 纯文字 → hint
+        - "## 结论"                  # 启发式: 含 ## → contains
+        - "## 来源"                  # scheduler 校验
+        - "中文, 2000+ 字"           # hint
+      min_size: 2000                 # scheduler 轻校验 (粗粒度)
 
   - id: write
     description: "基于调研写报告"
-    depends_on: [research]    # 显式 DAG 依赖
+    depends_on: [research]
     timeout: 300
     workers:
       - id: writer-1
@@ -207,13 +205,15 @@ stages:
         model: opencode/deepseek-v4-flash-free
         system_prompt: |
           你是 writer-1. 基于 {input.findings} 写完整报告.
-        # 自动从 research 拉 input.findings (= research 的 deliverable)
+    # v2: 单 markdown 文件, 用 checks 表达
     deliverable:
       path: data/report.md
       format: markdown
-      schema:
-        type: string
-        minLength: 500
+      checks:
+        - "## 摘要"                  # scheduler 校验
+        - "## 结论"
+        - "## 风险评估"
+      min_size: 3000
 
   - id: review
     description: "审核报告"
@@ -222,33 +222,69 @@ stages:
     workers:
       - id: reviewer-1
         cli: opencode
-        model: opencode/deepseek-v4-flash-free
         system_prompt: |
           你是 reviewer-1. 审核 {input.report}, 决定是否通过.
+    # v2: 多文件 + JSON envelope (checks 只描述文件存在)
     deliverable:
-      path: data/review-comments.json
-      format: json
-      schema:
+      paths:                          # 多文件
+        - data/review-comments.json
+        - data/review-trail.md
+      formats: [json, markdown]
+      checks:
+        - "review-comments.json"     # 启发式: 文件名 → exists
+        - "review-trail.md"
+        - "至少 3 条审核意见"        # hint
+      schema:                         # 可选: JSON envelope 严格校验
         type: object
+        required: [approved, feedback]
         properties:
           approved: {type: boolean}
           feedback: {type: string}
-          issues: {type: array, items: {type: string}}
 ```
 
-### 4.2 Pydantic Schema (类型化验证)
+**v2 schema 关键设计**:
+- `deliverable.path` / `deliverable.paths` / `deliverable.dir` **三选一**, 覆盖单文件 / 多文件 / 文件夹
+- `format` / `formats` 是 **hint** (不强制), 支持任意 (md / json / text / html / pdf / ...)
+- `checks` 统一列表 — 同时给 worker 提示 + scheduler 校验 (启发式分类)
+- `schema` **可选**, 只对结构化 JSON 输出加 (envelope 校验)
+- `min_size` / `max_size` scheduler 轻校验 (粗粒度)
+- 80% stage **不用写 schema**, 写 `checks` + `min_size` 就够
+
+### 4.2 Pydantic Schema (v2 — 类型化验证)
 
 ```python
 # src/agents_chat/workflow/schema.py
 
-from pydantic import BaseModel, Field
-from typing import Literal
+from pydantic import BaseModel, Field, model_validator
+from typing import Literal, Union
 
 class DeliverableSpec(BaseModel):
-    """Stage 产出契约: 路径 + 格式 + schema."""
-    path: str                       # 相对 data_dir, e.g. "data/findings.json"
-    format: Literal["json", "markdown", "text"] = "json"
-    schema: dict | None = None      # JSON Schema (optional, 验证)
+    """Stage 产出契约 (v2: 灵活 path/paths/dir + checks 合并)."""
+    # 路径: 3 选 1
+    path: str | None = None          # 单文件, e.g. "data/findings.md"
+    paths: list[str] | None = None   # 多文件, e.g. ["a.md", "b.json"]
+    dir: str | None = None           # 文件夹, e.g. "data/bundle/"
+    # 格式: hint, 不强制
+    format: str | None = None         # 单文件时
+    formats: list[str] | None = None # 多文件/文件夹时
+    # 轻校验 (粗粒度, scheduler 用)
+    checks: list[str] = []          # 统一检查列表 (worker 提示 + scheduler 校验)
+    min_size: int = 0               # 字符, 避免空文件
+    max_size: int | None = None      # 字符, 避免异常大
+    # 严格校验 (可选, 对结构化 JSON 输出)
+    schema: dict | None = None      # JSON Schema, 校验 envelope 严格结构
+
+    @model_validator(mode="after")
+    def check_path_specified(self):
+        """path / paths / dir 必须至少 1 个."""
+        if not any([self.path, self.paths, self.dir]):
+            raise ValueError("deliverable must specify one of: path, paths, dir")
+        # 多个互斥
+        specified = sum([bool(self.path), bool(self.paths), bool(self.dir)])
+        if specified > 1:
+            raise ValueError("deliverable.path/paths/dir are mutually exclusive")
+        return self
+
 
 class WorkerSpec(BaseModel):
     """Stage 内 worker 配置 (跟现有 config 兼容)."""
@@ -256,6 +292,7 @@ class WorkerSpec(BaseModel):
     cli: Literal["mock", "opencode", "qwen", "a2a"] = "opencode"
     model: str = "opencode/deepseek-v4-flash-free"
     system_prompt: str = ""
+
 
 class StageSpec(BaseModel):
     """DAG 节点."""
@@ -266,16 +303,102 @@ class StageSpec(BaseModel):
     workers: list[WorkerSpec] = Field(..., min_items=1)
     deliverable: DeliverableSpec
 
+
 class WorkflowSpec(BaseModel):
     """完整 DAG."""
     name: str = Field(..., regex=r"^[a-z][a-z0-9_-]*$")
     description: str = ""
     version: str = "1.0"
     stages: list[StageSpec] = Field(..., min_items=1)
-    
+
     def topological_order(self) -> list[StageSpec]:
         """拓扑排序, 检测循环依赖."""
-        # ... 算法 ...
+        # ... Kahn's algorithm ...
+```
+
+### 4.3 `checks` 详解 — 启发式 + 高级 type
+
+**两类表达** (用户友好):
+
+```python
+# 简单: 字符串列表 (90% 场景)
+checks:
+  - "至少 3 个权威来源"        # 启发式: 纯文字 → hint (给 worker 看)
+  - "## 结论"                  # 启发式: 含 markdown 标记 → contains (scheduler 校验)
+  - "## 来源"
+
+# 高级: dict (10% 场景, 显式 type)
+checks:
+  - type: hint                  # 只给 worker 看
+    value: "至少 3 个来源"
+  - type: contains              # 字符串子串
+    value: "## 结论"
+  - type: contains_any          # 多个子串, 任一匹配
+    values: ["done", "complete", "finished"]
+  - type: contains_all          # 全部子串必须出现
+    values: ["## 结论", "## 来源"]
+  - type: min_keywords          # 至少 N 个关键词
+    count: 2
+    keywords: ["结论", "建议"]
+  - type: regex                 # 正则匹配
+    pattern: "## 结论.*?\\n"
+```
+
+**scheduler 启发式 (简单字符串)**:
+```python
+# src/agents_chat/workflow/checks.py
+
+def _is_substring_check(text: str) -> bool:
+    """启发式: 字符串看起来像 'must contain' 还是 'hint'."""
+    # markdown 标记 → contains
+    if any(marker in text for marker in ["## ", "# ", "**", "`", "<"]):
+        return True
+    # 文件路径 (含 .json / .md / .txt) → contains
+    if re.search(r"\.\w{2,4}$", text):
+        return True
+    # 否则 hint
+    return False
+
+def evaluate_checks(checks: list[str|dict], file_content: str) -> CheckResult:
+    """执行 checks, 返每个的 pass/fail + reason."""
+    results = []
+    for c in checks:
+        if isinstance(c, str):
+            # 启发式分类
+            if _is_substring_check(c):
+                # contains 校验
+                results.append({
+                    "type": "contains",
+                    "expected": c,
+                    "passed": c in file_content,
+                })
+            else:
+                # hint, 不校验, 只 log
+                results.append({"type": "hint", "value": c, "passed": True})
+        else:
+            # dict 形式, 显式 type
+            t = c.get("type")
+            if t == "hint":
+                results.append({"type": "hint", "value": c["value"], "passed": True})
+            elif t == "contains":
+                results.append({"type": "contains", "expected": c["value"], "passed": c["value"] in file_content})
+            elif t == "contains_any":
+                values = c["values"]
+                results.append({"type": "contains_any", "values": values, "passed": any(v in file_content for v in values)})
+            elif t == "contains_all":
+                values = c["values"]
+                results.append({"type": "contains_all", "values": values, "passed": all(v in file_content for v in values)})
+            elif t == "min_keywords":
+                keywords = c["keywords"]
+                count = c["count"]
+                found = sum(1 for k in keywords if k in file_content)
+                results.append({"type": "min_keywords", "count": count, "found": found, "passed": found >= count})
+            elif t == "regex":
+                results.append({"type": "regex", "pattern": c["pattern"], "passed": bool(re.search(c["pattern"], file_content, re.DOTALL))})
+    return CheckResult(
+        all_passed=all(r["passed"] for r in results),
+        results=results,
+    )
 ```
 
 ### 4.3 YAML 加载 + 验证
@@ -357,25 +480,57 @@ Stage channel:   data_v2/channels/.stage-{stage_id}-{run_id}.jsonl
 
 ## 6. 关键设计: Stage 完成检测
 
-### 6.1 三种方案对比
+### 6.1 三种方案对比 (v2: checks 轻校验)
 
-**方案 A: Deliverable 文件存在 + schema 验证 (推荐)**
+**方案 A: Deliverable 文件存在 + checks 轻校验 (推荐, v2)**
 
 ```python
 def stage_done(stage: StageSpec) -> bool:
-    """Stage 完成: deliverable 文件存在 + (可选) schema 验证."""
-    deliverable_path = data_dir / stage.deliverable.path
-    if not deliverable_path.exists():
-        return False
-    if stage.deliverable.schema:
-        # 可选: 验证 JSON 符合 schema
+    """Stage 完成: deliverable 文件存在 + size + checks 轻校验."""
+    # 1. 检查 deliverable (path/paths/dir 三选一)
+    if stage.deliverable.path:
+        paths_to_check = [stage.deliverable.path]
+    elif stage.deliverable.paths:
+        paths_to_check = stage.deliverable.paths
+    elif stage.deliverable.dir:
+        if not (data_dir / stage.deliverable.dir).is_dir():
+            return False
+        paths_to_check = list((data_dir / stage.deliverable.dir).rglob("*"))
+    else:
+        return False  # 上面 @model_validator 应该 catch 这个
+    
+    # 2. 所有路径必须存在
+    for p in paths_to_check:
+        if not (data_dir / p).exists():
+            return False
+    
+    # 3. Size 检查 (粗粒度, 避免空文件 / 异常大)
+    primary_file = data_dir / paths_to_check[0]
+    if primary_file.is_file():
+        size = primary_file.stat().st_size
+        if size < stage.deliverable.min_size:
+            return False
+        if stage.deliverable.max_size and size > stage.deliverable.max_size:
+            return False
+    
+    # 4. Checks 轻校验 (启发式 + 高级 type, 见 4.3)
+    if stage.deliverable.checks and primary_file.is_file():
+        try:
+            content = primary_file.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            return False
+        result = evaluate_checks(stage.deliverable.checks, content)
+        return result.all_passed  # ← 这里是关键变化, 旧是 "schema validate"
+    
+    # 5. 可选: 严格 schema (对结构化 JSON 输出)
+    if stage.deliverable.schema and primary_file.suffix == ".json":
         import jsonschema
-        data = json.loads(deliverable_path.read_text())
+        data = json.loads(primary_file.read_text())
         try:
             jsonschema.validate(data, stage.deliverable.schema)
-            return True
         except jsonschema.ValidationError:
             return False
+    
     return True
 ```
 
@@ -394,17 +549,19 @@ workflow_api.stage_done("research", data={"sources": [...], ...})
 
 ```python
 # worker 写一条特殊 channel message:
-ch.append(from_=worker_id, content="", metadata={"workflow_stage_done": "research", "deliverable": "data/findings.json"})
+ch.append(from_=worker_id, content="", metadata={"workflow_stage_done": "research", "deliverable": "data/findings.md"})
 ```
 
 - 复用 channel 但需要 magic 字段
 
-**我选 A**:
+**我选 A (v2)**:
 - 0 改动 (worker 不知道 stage 概念)
 - 天然 (文件本身就是契约)
 - 可审计 (scheduler 定期 check 文件系统)
+- **80% stage 不需要 schema 校验**, 用 checks 启发式就够
+- 只有结构化 JSON 输出 (e.g. extract-entities stage) 才写 schema
 
-### 6.2 Scheduler 监控循环
+### 6.2 Scheduler 监控循环 (v2: 多文件支持)
 
 ```python
 # src/agents_chat/workflow/scheduler.py
@@ -424,13 +581,24 @@ class WorkflowScheduler:
         for stage in self.workflow.topological_order():
             # 1. 启 stage
             await self._start_stage(stage)
-            # 2. 监控 (等 deliverable 文件 + timeout)
+            self.stage_states[stage.id] = "running"
+            
+            # 2. 监控 (等 deliverable + checks 校验 + timeout)
             success = await self._wait_stage_done(stage)
             if not success:
-                return WorkflowResult(status="failed", failed_stage=stage.id)
-            # 3. 转交 deliverable 给下一 stage (或 workflow 结束)
+                self.stage_states[stage.id] = "failed"
+                return {
+                    "status": "failed",
+                    "run_id": self.run_id,
+                    "failed_stage": stage.id,
+                    "check_results": self._last_check_results,  # 返详细失败原因
+                }
+            
+            self.stage_states[stage.id] = "success"
             await self._handoff_deliverable(stage)
-        return WorkflowResult(status="success")
+            await self._cleanup_stage(stage)
+        
+        return {"status": "success", "run_id": self.run_id}
     
     async def _start_stage(self, stage: StageSpec):
         """启 stage 的 workers + 创建私有 channel."""
@@ -467,6 +635,60 @@ class WorkflowScheduler:
         channel_file = self.data_dir / "channels" / f"{channel_name}.jsonl"
         if channel_file.exists():
             channel_file.unlink()
+
+    def _wait_stage_done(self, stage: StageSpec) -> bool:
+        """v2: 用 checks 轻校验 deliverable, 不强 schema."""
+        deliverable = stage.deliverable
+        
+        # 1. 路径收集 (path / paths / dir 三选一)
+        if deliverable.path:
+            primary_path = self.data_dir / deliverable.path
+            all_paths = [primary_path]
+        elif deliverable.paths:
+            all_paths = [self.data_dir / p for p in deliverable.paths]
+            primary_path = all_paths[0]
+        elif deliverable.dir:
+            dir_path = self.data_dir / deliverable.dir
+            if not dir_path.is_dir():
+                return False
+            all_paths = list(dir_path.rglob("*"))
+            primary_path = all_paths[0] if all_paths else None
+        else:
+            return False
+        
+        # 2. 所有路径存在
+        for p in all_paths:
+            if not p.exists():
+                return False
+        
+        # 3. Size 检查
+        if primary_path and primary_path.is_file():
+            size = primary_path.stat().st_size
+            if size < deliverable.min_size:
+                return False
+            if deliverable.max_size and size > deliverable.max_size:
+                return False
+        
+        # 4. Checks 轻校验
+        if deliverable.checks and primary_path and primary_path.is_file():
+            try:
+                content = primary_path.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                return False
+            result = evaluate_checks(deliverable.checks, content)
+            self._last_check_results = result
+            return result.all_passed
+        
+        # 5. 可选: 严格 schema (对结构化 JSON)
+        if deliverable.schema and primary_path and primary_path.suffix == ".json":
+            import jsonschema
+            data = json.loads(primary_path.read_text())
+            try:
+                jsonschema.validate(data, deliverable.schema)
+            except jsonschema.ValidationError:
+                return False
+        
+        return True
 ```
 
 ---
@@ -844,16 +1066,29 @@ def test_research_pipeline_runs(tmp_path):
 
 ---
 
-## 13. 决策矩阵
+## 13. 决策矩阵 (v2 修订后)
 
 | 场景 | 推荐方案 |
 |------|----------|
 | 一次性多阶段 LLM pipeline | **方案 A** (私有 channel + 文件交付) — 跟现有对齐 |
 | 可重复 pipeline (CI/CD 风格) | **方案 A** + 重跑 (`--from-stage`) |
 | Stage 隔离 (严格不互见) | **方案 A** (天然, channel 不存在其他 worker 看不到) |
+| **Deliverable 是 free text (报告/文案)** | **v2 checks 启发式** (`## 结论` → contains 校验) |
+| **Deliverable 是结构化 JSON** | **v2 checks + 可选 schema** (envelope 严格校验) |
+| **Deliverable 是多文件 bundle** | **v2 paths:** 列表 + formats: 列表 |
+| **Deliverable 是文件夹** | **v2 dir:** 文件夹 + 约定命名 |
 | Stage 失败处理 (MVP) | **方案 A** (失败 → 整体 fail, 手动重跑) |
 | 真实生产 (10+ 团队用) | 方案 A + 方案 B (retry) — Phase 2 |
 | 100% 跟现有对齐 (风格一致) | **方案 A** |
+
+**v2 新增决策** (本期 4 个选择 + 后续):
+
+| # | 决策 | 选择 | 理由 |
+|---|------|------|------|
+| 1 | `checks` 表达 | **合并为单列表** (字符串 + dict 高级) | 简单统一, 启发式分类 |
+| 2 | 多文件表达 | **3 种都支持** (path / paths / dir) | 覆盖单文件/多文件/文件夹 |
+| 3 | `key_points` vs `must_contain` 区分 | **取消区分, 统一 `checks`** | 启发式自动分类 |
+| 4 | 启发式规则 | **含 markdown/html 标记 → contains, 否则 hint** | 90% 场景不需写 type |
 
 ---
 
