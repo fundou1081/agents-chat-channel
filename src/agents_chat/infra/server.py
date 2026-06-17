@@ -872,6 +872,15 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
                 pass
         return {"runs": result}
 
+    # 注意: 这个端点必须在 /api/workflows/{run_id} 之前定义
+    # (FastAPI 按定义顺序匹配, "active" 会被 catch-all 吃掉)
+    @app.get("/api/workflows/active")
+    def list_active_workflows():
+        """列所有 active (running) workflow run IDs."""
+        from ..workflow.registry import WorkflowRegistry
+        registry = WorkflowRegistry.get_default()
+        return {"active": registry.list_active()}
+
     @app.get("/api/workflows/{run_id}")
     def get_workflow_run(run_id: str):
         """获取单个 workflow run 的详细状态."""
@@ -909,6 +918,9 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
             from_stage=req.from_stage,
             single_stage=req.single_stage,
         )
+        # 注册到 global registry (用于 cancel endpoint 查找)
+        from ..workflow.registry import WorkflowRegistry
+        WorkflowRegistry.get_default().register(scheduler)
         # 在后台跑 (立即返 run_id)
         background_tasks.add_task(_run_workflow_background, scheduler)
         return {
@@ -1000,6 +1012,25 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
         from fastapi.responses import HTMLResponse
         return HTMLResponse(content=html)
 
+    @app.post("/api/workflows/{run_id}/cancel")
+    def cancel_workflow_run(run_id: str):
+        """取消运行中的 workflow. R8 修复."""
+        from ..workflow.registry import WorkflowRegistry
+        registry = WorkflowRegistry.get_default()
+        scheduler = registry.get(run_id)
+        if not scheduler:
+            raise HTTPException(
+                status_code=404,
+                detail=f"run '{run_id}' not found in active registry (may have already finished)",
+            )
+        scheduler.cancel()
+        return {
+            "run_id": run_id,
+            "status": "canceled",
+            "message": "cancel signal sent; current stage will cleanup and run will return",
+        }
+
+
     # -------------------------------------------------------------------------
     # WebUI Static
     # -------------------------------------------------------------------------
@@ -1015,7 +1046,12 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
 async def _run_workflow_background(scheduler):
     """后台任务: 跑 workflow 并记录结果."""
     from ..workflow.scheduler import WorkflowScheduler
-    await scheduler.run()
+    from ..workflow.registry import WorkflowRegistry
+    try:
+        await scheduler.run()
+    finally:
+        # 总是从 registry 注销 (不论成功 / 失败 / 取消)
+        WorkflowRegistry.get_default().unregister(scheduler.run_id)
 
 
 # =============================================================================

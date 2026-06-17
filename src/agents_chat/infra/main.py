@@ -276,6 +276,10 @@ def main(argv: list[str] | None = None):
         cmd_validate(args)
     elif args.cmd == "workflow-visualize":
         cmd_visualize(args)
+    elif args.cmd == "workflow-cancel":
+        cmd_cancel(args)
+    elif args.cmd == "workflow-active":
+        cmd_active(args)
 
 
 if __name__ == "__main__":

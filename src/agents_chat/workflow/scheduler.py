@@ -107,6 +107,8 @@ class WorkflowScheduler:
         run_id: Optional[str] = None,
         from_stage: Optional[str] = None,
         single_stage: Optional[str] = None,
+        poll_interval: float = 2.0,
+        spawn_delay: float = 0.5,
     ):
         """Args:
             workflow: WorkflowSpec (已 load + 验证)
@@ -114,12 +116,16 @@ class WorkflowScheduler:
             run_id: 跑 ID (默认生成)
             from_stage: 从哪个 stage 开始 (跳过前面 stage)
             single_stage: 只跑单个 stage (用于 --stage 重跑)
+            poll_interval: deliverable poll 间隔 (秒, default 2.0)
+            spawn_delay: worker 启动后到 polling 间的等待 (秒, default 0.5)
         """
         self.workflow = workflow
         self.data_dir = Path(data_dir).resolve()
         self.run_id = run_id or f"run-{uuid.uuid4().hex[:8]}"
         self.from_stage = from_stage
         self.single_stage = single_stage
+        self.poll_interval = poll_interval
+        self.spawn_delay = spawn_delay
 
         # 状态
         self.result = WorkflowRunResult(
@@ -134,6 +140,8 @@ class WorkflowScheduler:
 
         # 私有 channel 文件路径 (stage 完删)
         self._stage_channels: dict[str, Path] = {}
+        # 取消标志 (在 cancel() 设置)
+        self._cancel_requested: bool = False
 
     # =================================================================
     # 主循环
@@ -176,6 +184,16 @@ class WorkflowScheduler:
 
                 # 2b. 监控 stage 完成 (等 deliverable + checks + timeout)
                 success = await self._wait_stage_done(stage)
+
+                # 检查 cancel
+                if self._check_cancel():
+                    logger.info(
+                        f"[workflow {self.run_id}] cancel detected after stage '{stage.id}'"
+                    )
+                    self.result.stage_states[stage.id] = "canceled"
+                    self._cleanup_stage(stage)
+                    return self._finalize()
+
                 if not success:
                     logger.error(
                         f"[workflow {self.run_id}] stage '{stage.id}' failed/timed out"
@@ -241,6 +259,34 @@ class WorkflowScheduler:
                 f"[workflow {self.run_id}] failed to save run state: {e}"
             )
         return self.result
+
+    def cancel(self) -> None:
+        """取消当前 run. 后续 stage 跳过, 已 running 的 stage 全部 cleanup.
+
+        调后:
+          - _cancel_requested = True
+          - 当前 stage (如在跑) 会被 _wait_stage_done 检测到后 return False
+          - 下一轮循环: status='canceled', 跳出
+
+        注: 此方法是设置一个 flag, 在 run() 循环检查.
+            不是强行中断 (agent.run() task 异步在跑, cancel 后台自然结束).
+        """
+        if self._cancel_requested:
+            return  # 幂等
+        logger.info(f"[workflow {self.run_id}] cancel requested")
+        self._cancel_requested = True
+        self.result.status = "canceled"
+        # 立即 stop 当前 stage 的 agents (要 force terminate)
+        for agents in self._stage_agents.values():
+            for a in agents:
+                try:
+                    a.stop()
+                except Exception:
+                    pass
+
+    def _check_cancel(self) -> bool:
+        """检查是否请求取消. 返 True = 取消."""
+        return self._cancel_requested
 
     # =================================================================
     # Stage lifecycle
@@ -314,7 +360,7 @@ class WorkflowScheduler:
         self._stage_tasks[stage.id] = tasks
 
         # 给 worker 一点启动时间
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(self.spawn_delay)
         logger.info(
             f"[workflow {self.run_id}] stage '{stage.id}' started "
             f"({len(agents)} workers in {channel_name})"
@@ -334,7 +380,7 @@ class WorkflowScheduler:
             return False
 
         # Poll 循环
-        poll_interval = 2.0  # 秒
+        poll_interval = self.poll_interval
         while time.time() < deadline:
             # 1. 路径存在
             if all(p.exists() for p in paths_to_check):

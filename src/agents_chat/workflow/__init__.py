@@ -30,6 +30,7 @@ from .runner import (
     build_input_handoff_paths,
 )
 from .scheduler import WorkflowScheduler, WorkflowRunResult
+from .registry import WorkflowRegistry
 from .html_report import render_workflow_html, render_and_save_html
 
 __all__ = [
@@ -52,6 +53,7 @@ __all__ = [
     # Scheduler
     "WorkflowScheduler",
     "WorkflowRunResult",
+    "WorkflowRegistry",
     # HTML Report
     "render_workflow_html",
     "render_and_save_html",

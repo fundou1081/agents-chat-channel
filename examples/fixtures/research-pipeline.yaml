@@ -1,0 +1,79 @@
+name: research-pipeline
+description: "3-stage research pipeline (research → write → review)"
+stages:
+  - id: research
+    workers:
+      - id: researcher
+        cli: opencode
+        model: opencode/deepseek-v4-pro
+        system_prompt: |
+          你是 researcher. 收集 {input.topic} 相关的资料.
+          输出结构化 JSON, 含 findings / sources / counterpoints.
+    deliverable:
+      path: out/research.json
+      min_size: 100
+      format: json
+      checks:
+        - '"findings"'
+        - '"sources"'
+        - type: min_keywords
+          keywords: ["finding", "source", "data"]
+          min_count: 3
+      schema:
+        type: object
+        required: [findings, sources]
+        properties:
+          findings:
+            type: array
+            items:
+              type: object
+          sources:
+            type: array
+    timeout: 600
+
+  - id: write
+    depends_on: [research]
+    workers:
+      - id: writer
+        cli: opencode
+        model: opencode/deepseek-v4-pro
+        system_prompt: |
+          基于 {input.findings} 写报告.
+          报告必须含 ## Summary 和 ## Recommendations.
+      - id: reviewer
+        cli: opencode
+        model: opencode/deepseek-v4-pro
+        system_prompt: |
+          审阅 writer 报告, 修改/补充.
+    deliverable:
+      path: out/report.md
+      min_size: 200
+      format: markdown
+      checks:
+        - "## Summary"
+        - "## Recommendations"
+        - type: contains_any
+          values: ["## Summary", "## 结论"]
+        - type: min_keywords
+          keywords: ["分析", "建议", "结论"]
+          min_count: 2
+    timeout: 600
+
+  - id: publish
+    depends_on: [write]
+    workers:
+      - id: publisher
+        cli: opencode
+        model: opencode/deepseek-v4-pro
+        system_prompt: |
+          格式化报告, 添加 ## 结论 section, 准备发布.
+    deliverable:
+      path: out/final.md
+      min_size: 300
+      format: markdown
+      checks:
+        - type: contains_all
+          values: ["## Summary", "## Recommendations", "## 结论"]
+        - type: regex
+          pattern: "^## 结论"
+    timeout: 300

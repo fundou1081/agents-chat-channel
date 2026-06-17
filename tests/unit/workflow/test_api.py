@@ -255,3 +255,60 @@ class TestWorkflowHTML:
         """不存在的 run → 404."""
         resp = client.get("/api/workflows/nonexistent/html")
         assert resp.status_code == 404
+
+# =============================================================================
+# R7/R8: cancel / active endpoints
+# =============================================================================
+
+
+class TestCancelAndActive:
+    def test_active_empty(self, client):
+        """GET /api/workflows/active → 空 list."""
+        resp = client.get("/api/workflows/active")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["active"] == []
+
+    def test_cancel_not_found(self, client):
+        """POST /api/workflows/{run_id}/cancel — 不存在 → 404."""
+        resp = client.post("/api/workflows/nonexistent/cancel")
+        assert resp.status_code == 404
+        assert "not found in active registry" in resp.json()["detail"]
+
+    def test_cancel_success(self, client, data_dir):
+        """POST /api/workflows/{run_id}/cancel — active → cancel."""
+        from agents_chat.workflow.registry import WorkflowRegistry
+        from agents_chat.workflow import load_workflow_from_string, WorkflowScheduler
+
+        # 创建 workflow YAML + 预写 deliverable
+        yaml_path = data_dir / "pipeline.yaml"
+        yaml_path.write_text("""
+name: t
+stages:
+  - id: a
+    workers: [{id: w, cli: mock}]
+    deliverable: {path: out/a.json, min_size: 1}
+    timeout: 30
+""")
+        (data_dir / "out").mkdir()
+        (data_dir / "out" / "a.json").write_text("## ok")
+
+        # 注册 scheduler (不实际跑, 只调 cancel)
+        spec = load_workflow_from_string(yaml_path.read_text())
+        scheduler = WorkflowScheduler(spec, data_dir, run_id="run-cancel-1")
+        registry = WorkflowRegistry.get_default()
+        registry.register(scheduler)
+
+        # 验证 active
+        active = client.get("/api/workflows/active").json()
+        assert "run-cancel-1" in active["active"]
+
+        # 取消
+        resp = client.post("/api/workflows/run-cancel-1/cancel")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "canceled"
+        assert scheduler._cancel_requested is True
+
+        # 清理
+        registry.unregister("run-cancel-1")

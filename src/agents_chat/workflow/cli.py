@@ -163,6 +163,50 @@ def cmd_validate(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_cancel(args: argparse.Namespace) -> None:
+    """取消 running workflow (需要 server 启)."""
+    import urllib.request
+    base = args.server_url.rstrip("/")
+    url = f"{base}/api/workflows/{args.run_id}/cancel"
+    try:
+        req = urllib.request.Request(url, method="POST")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+        print(f"✅ {data.get('message', 'cancelled')}")
+        print(f"   Run: {data.get('run_id')}")
+        print(f"   Status: {data.get('status')}")
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            print(f"❌ Run '{args.run_id}' not found in server registry", file=sys.stderr)
+            print("   (可能: 1) run 已完成 2) server URL 错 3) 启方式是 CLI)", file=sys.stderr)
+            sys.exit(1)
+        print(f"❌ HTTP {e.code}: {e.reason}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ Failed: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_active(args: argparse.Namespace) -> None:
+    """列 server 上 active workflows."""
+    import urllib.request
+    base = args.server_url.rstrip("/")
+    url = f"{base}/api/workflows/active"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            data = json.loads(resp.read())
+        active = data.get("active", [])
+        if not active:
+            print("(no active workflows)")
+        else:
+            print(f"Active workflows ({len(active)}):")
+            for rid in active:
+                print(f"  🔄 {rid}")
+    except Exception as e:
+        print(f"❌ Failed: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def cmd_visualize(args: argparse.Namespace) -> None:
     """生成 DAG + stage 状态 HTML 页面."""
     from ..workflow import load_workflow, WorkflowRunResult
@@ -251,3 +295,14 @@ def register_workflow_parser(subparsers: argparse._SubParsersAction) -> None:
     p_viz.add_argument("--output", "-o", default=None, help="输出文件路径 (默认 workflow-<name>.html)")
     p_viz.add_argument("--data-dir", default=os.environ.get("AGENTS_CHAT_DATA_DIR", "./data_v2"))
     p_viz.set_defaults(cmd="workflow-visualize")
+
+    # ---- workflow cancel ----
+    p_cancel = wf_sub.add_parser("cancel", help="取消 server 上 running workflow")
+    p_cancel.add_argument("run_id", help="Run ID")
+    p_cancel.add_argument("--server-url", default=os.environ.get("AGENTS_CHAT_SERVER_URL", "http://127.0.0.1:8765"), help="Server URL")
+    p_cancel.set_defaults(cmd="workflow-cancel")
+
+    # ---- workflow active ----
+    p_active = wf_sub.add_parser("active", help="列 server 上 active workflows")
+    p_active.add_argument("--server-url", default=os.environ.get("AGENTS_CHAT_SERVER_URL", "http://127.0.0.1:8765"), help="Server URL")
+    p_active.set_defaults(cmd="workflow-active")
