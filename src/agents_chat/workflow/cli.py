@@ -18,6 +18,9 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+import pydantic
+import yaml
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
@@ -145,7 +148,6 @@ def cmd_status(args: argparse.Namespace) -> None:
 def cmd_validate(args: argparse.Namespace) -> None:
     """验证 workflow YAML 语法."""
     from ..workflow import WorkflowSpec
-    import yaml
 
     yaml_path = Path(args.yaml_path).resolve()
     try:
@@ -156,7 +158,7 @@ def cmd_validate(args: argparse.Namespace) -> None:
         print(f"   Stages: {len(spec.stages)} (topological order: {[s.id for s in stages]})")
         for s in stages:
             print(f"   • {s.id}: {len(s.workers)} worker(s), timeout={s.timeout}s")
-    except (FileNotFoundError, ValueError, Exception) as e:
+    except (FileNotFoundError, ValueError, yaml.YAMLError, pydantic.ValidationError) as e:
         print(f"❌ Validation failed: {e}", file=sys.stderr)
         sys.exit(1)
 
@@ -181,7 +183,6 @@ def cmd_visualize(args: argparse.Namespace) -> None:
     if args.run_id:
         run_file = data_dir / "runs" / f"{args.run_id}.json"
         if run_file.exists():
-            import json
             try:
                 data = json.loads(run_file.read_text("utf-8"))
                 result = WorkflowRunResult(

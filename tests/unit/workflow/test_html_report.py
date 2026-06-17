@@ -131,6 +131,16 @@ class TestRenderWorkflowHtml:
         assert html.startswith("<!DOCTYPE html>")
         assert "</html>" in html
 
+    def test_mermaid_no_markdown_fence(self):
+        """Mermaid 不用 ```mermaid fence (CDN 解析器只认 <div class='mermaid'>)."""
+        spec = load_workflow_from_string(SIMPLE_WF_YAML)
+        html = render_workflow_html(spec)
+        # 不能有 ``` 包围
+        assert "```mermaid" not in html
+        # 必须是 <div class="mermaid"> 包装
+        assert '<div class="mermaid">' in html
+        assert "graph TD" in html
+
 
 # =============================================================================
 # render_and_save_html tests

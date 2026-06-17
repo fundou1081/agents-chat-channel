@@ -207,7 +207,11 @@ class WorkflowScheduler:
             return self._finalize()
 
     def _finalize(self) -> WorkflowRunResult:
-        """清理 + 持久化 + 返 result."""
+        """清理 + 持久化 + 返 result.
+
+        注: 不 await cancelled tasks, 因为 agent.run() 可能不立即响应 cancel.
+        依赖 _cleanup_stage 提前 stop agents + cancel tasks 防止泄漏.
+        """
         # 清理所有仍在跑的 worker (保险)
         for stage_id, tasks in self._stage_tasks.items():
             for t in tasks:
@@ -230,7 +234,12 @@ class WorkflowScheduler:
         self.result.stage_deps = {
             s.id: list(s.depends_on) for s in self.workflow.stages
         }
-        self._save_run_state()
+        try:
+            self._save_run_state()
+        except Exception as e:
+            logger.error(
+                f"[workflow {self.run_id}] failed to save run state: {e}"
+            )
         return self.result
 
     # =================================================================
@@ -240,13 +249,19 @@ class WorkflowScheduler:
     def _filter_stages(
         self, all_stages: list[StageSpec]
     ) -> list[StageSpec]:
-        """根据 from_stage / single_stage 过滤."""
+        """根据 from_stage / single_stage 过滤.
+
+        Raises:
+            ValueError: from_stage 或 single_stage 不存在
+        """
         if self.single_stage:
             # 只跑一个 stage
             for s in all_stages:
                 if s.id == self.single_stage:
                     return [s]
-            raise ValueError(f"stage '{self.single_stage}' not found")
+            raise ValueError(
+                f"stage '{self.single_stage}' not found in workflow"
+            )
         if self.from_stage:
             # 从 from_stage 开始 (含 from_stage)
             started = False
@@ -256,6 +271,11 @@ class WorkflowScheduler:
                     started = True
                 if started:
                     filtered.append(s)
+            if not started:
+                # from_stage 不存在 → 显式报错, 避免静默返空
+                raise ValueError(
+                    f"from_stage '{self.from_stage}' not found in workflow"
+                )
             return filtered
         return all_stages
 
@@ -431,7 +451,10 @@ class WorkflowScheduler:
     def _cleanup_stage(self, stage: StageSpec) -> None:
         """删私有 channel 文件, 保留 deliverable."""
         # 删 channel 文件
-        channel_file = self._stage_channels.get(stage.id)
+        channel_file = self._stage_channels.pop(stage.id, None)
+        agents = self._stage_agents.pop(stage.id, [])
+        tasks = self._stage_tasks.pop(stage.id, [])
+
         if channel_file and channel_file.exists():
             try:
                 channel_file.unlink()
@@ -444,14 +467,14 @@ class WorkflowScheduler:
                 )
 
         # Stop agents (graceful)
-        for agent in self._stage_agents.get(stage.id, []):
+        for agent in agents:
             try:
                 agent.stop()
             except Exception:
                 pass
 
         # Cancel tasks
-        for task in self._stage_tasks.get(stage.id, []):
+        for task in tasks:
             if not task.done():
                 task.cancel()
 

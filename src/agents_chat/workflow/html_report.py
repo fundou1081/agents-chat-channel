@@ -27,9 +27,12 @@ from .scheduler import WorkflowRunResult
 
 
 def _render_mermaid(spec: WorkflowSpec, result: Optional[WorkflowRunResult] = None) -> str:
-    """生成 Mermaid 流程图代码."""
-    lines = ["```mermaid", "graph TD"]
-    
+    """生成 Mermaid 流程图代码 (裸语法, 无 markdown fence).
+
+    mermaid.js 找 <div class="mermaid">...</div> 元素, 不解析 ``` fence.
+    """
+    lines = ["graph TD"]
+
     # 给每个 stage 一个 node
     state_map = {}
     if result and result.stage_states:
@@ -43,7 +46,7 @@ def _render_mermaid(spec: WorkflowSpec, result: Optional[WorkflowRunResult] = No
         # 状态图标
         state = state_map.get(sid, "pending")
         state_icon = {"success": "✅", "failed": "❌", "running": "🔄", "pending": "⏳"}.get(state, "⏳")
-        
+
         # Node label
         label = f"{state_icon} {sid}\\n{worker_count} worker(s)\\n{timeout}s"
         lines.append(f'    {sid}["{label}"]')
@@ -57,8 +60,9 @@ def _render_mermaid(spec: WorkflowSpec, result: Optional[WorkflowRunResult] = No
         for dep in stage.depends_on:
             lines.append(f"    {dep} --> {stage.id}")
 
-    lines.append("```")
-    return "\n".join(lines)
+    # mermaid.js 需要 <div class="mermaid"> 包装
+    body = "\n".join(lines)
+    return f'<div class="mermaid">\n{body}\n</div>'
 
 
 # =============================================================================

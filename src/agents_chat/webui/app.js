@@ -24,14 +24,17 @@ const state = {
 // ============================
 
 async function api(path, opts = {}) {
+  const { responseType = 'json', ...fetchOpts } = opts;
   const res = await fetch(API + path, {
     headers: { 'Content-Type': 'application/json' },
-    ...opts,
+    ...fetchOpts,
   });
   if (!res.ok) {
     const err = await res.text().catch(() => res.statusText);
     throw new Error(`${path}: ${res.status} ${err}`);
   }
+  if (responseType === 'text') return res.text();
+  if (responseType === 'blob') return res.blob();
   return res.json();
 }
 
@@ -1249,52 +1252,60 @@ async function refreshWorkflows() {
     }
     let html = '<div class="wf-runs">';
     for (const r of runs) {
+      // XSS 防护: 所有动态值 escape
       const icon = { success: '✅', failed: '❌', running: '🔄' }[r.status] || '•';
-      const started = (r.started_at || '').slice(0, 19);
-      const finished = (r.finished_at || '').slice(0, 19);
-      const fail = r.failed_stage ? ` at <span style="color:#c00">${r.failed_stage}</span>` : '';
-      
-      // Stage 状态条
+      const started = escapeHtml((r.started_at || '').slice(0, 19));
+      const finished = escapeHtml((r.finished_at || '').slice(0, 19));
+      const wfName = escapeHtml(r.workflow_name || '?');
+      const runId = escapeHtml(r.run_id || '');
+      const status = escapeHtml((r.status || '').toUpperCase());
+      const failedStage = r.failed_stage ? escapeHtml(r.failed_stage) : '';
+      const failSpan = failedStage ? ` at <span style="color:#c00">${failedStage}</span>` : '';
+      const safeStatus = escapeHtml(r.status || '');
+
+      // Stage 状态条 (sid + state escape)
       let stageBar = '';
-      if (r.stage_states) {
-        for (const [sid, state] of Object.entries(r.stage_states)) {
-          const sicon = { success: '🟢', failed: '🔴', running: '🔵' }[state] || '⚪';
-          stageBar += `<span class="wf-stage-badge ${state}" title="${sid}: ${state}">${sicon} ${sid}</span>`;
-        }
+      const stageStates = r.stage_states || {};
+      for (const [sid, state] of Object.entries(stageStates)) {
+        const sicon = { success: '🟢', failed: '🔴', running: '🔵' }[state] || '⚪';
+        const safeState = escapeHtml(state);
+        const safeSid = escapeHtml(sid);
+        stageBar += `<span class="wf-stage-badge ${safeState}" title="${safeSid}: ${safeState}">${sicon} ${safeSid}</span>`;
       }
 
       // Checks 摘要
       let checksHtml = '';
-      if (r.check_results) {
-        for (const [sid, cr] of Object.entries(r.check_results)) {
-          if (cr.all_passed === undefined) continue;
-          const cicon = cr.all_passed ? '✅' : '❌';
-          checksHtml += `<span class="wf-check-badge" title="${sid}: ${cr.items?.length || 0} checks">${cicon} ${sid}</span>`;
-        }
+      const checkResults = r.check_results || {};
+      for (const [sid, cr] of Object.entries(checkResults)) {
+        if (!cr || cr.all_passed === undefined) continue;
+        const cicon = cr.all_passed ? '✅' : '❌';
+        const safeSid = escapeHtml(sid);
+        const itemCount = (cr.items && cr.items.length) || 0;
+        checksHtml += `<span class="wf-check-badge" title="${safeSid}: ${itemCount} checks">${cicon} ${safeSid}</span>`;
       }
 
       html += `
         <div class="wf-run-card">
           <div class="wf-run-header">
-            <strong>${icon} ${r.workflow_name}</strong>
-            <span class="wf-run-id">${r.run_id}</span>
+            <strong>${icon} ${wfName}</strong>
+            <span class="wf-run-id">${runId}</span>
           </div>
           <div class="wf-run-meta">
-            <span>Started: ${started}</span>
+            <span>Started: ${started || '—'}</span>
             <span>Finished: ${finished || '—'}</span>
-            <span>Status: <strong class="wf-status-${r.status}">${r.status.toUpperCase()}${fail}</strong></span>
+            <span>Status: <strong class="wf-status-${safeStatus}">${status}${failSpan}</strong></span>
           </div>
           ${stageBar ? `<div class="wf-stage-bar">${stageBar}</div>` : ''}
           ${checksHtml ? `<div class="wf-checks">${checksHtml}</div>` : ''}
           <div class="wf-run-actions">
-            <button class="btn btn-sm" onclick="viewWorkflowHTML('${r.run_id}')">📊 可视化</button>
+            <button class="btn btn-sm" onclick="viewWorkflowHTML('${runId}')">📊 可视化</button>
           </div>
         </div>`;
     }
     html += '</div>';
     el.innerHTML = html;
   } catch (e) {
-    el.innerHTML = '<div class="error">加载失败: ' + e.message + '</div>';
+    el.innerHTML = '<div class="error">加载失败: ' + escapeHtml(e.message) + '</div>';
   }
 }
 
@@ -1330,8 +1341,14 @@ async function runWorkflow() {
 
 async function viewWorkflowHTML(run_id) {
   try {
-    const html = await api('/api/workflows/' + run_id + '/html');
+    // HTML endpoint 返 text/html, 不走默认 json
+    const html = await api('/api/workflows/' + encodeURIComponent(run_id) + '/html', { responseType: 'text' });
     const w = window.open('', '_blank');
+    if (!w) {
+      showToast('Popup 被拦截, 请允许 popup 后重试', 'error');
+      return;
+    }
+    w.document.open();
     w.document.write(html);
     w.document.close();
   } catch (e) {
