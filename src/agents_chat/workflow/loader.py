@@ -77,8 +77,6 @@ def write_workflow_yaml(spec: WorkflowSpec, yaml_path: str | Path) -> None:
 
     字段顺序: name → description → version → stages
     """
-    import json
-
     yaml_path = Path(yaml_path)
     data = spec.model_dump(exclude_none=True)
     yaml_path.parent.mkdir(parents=True, exist_ok=True)

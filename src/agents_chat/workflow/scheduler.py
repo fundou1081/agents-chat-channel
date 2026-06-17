@@ -466,6 +466,9 @@ class WorkflowScheduler:
             dir_path = self.data_dir / d.dir
             if dir_path.is_dir():
                 paths.extend(dir_path.rglob("*"))
+            else:
+                # dir 不存在: 返 dir 自身, scheduler 等它出现
+                paths.append(dir_path)
         return paths
 
     def _get_deliverable_primary_path(

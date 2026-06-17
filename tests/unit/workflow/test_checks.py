@@ -47,8 +47,8 @@ class TestStringContainsHeuristic:
         assert _is_substring_check('"approved": true') is True
 
     def test_markdown_link_contains(self):
-        """含 '[' 标记 → contains."""
-        assert _is_substring_check("[example](url)") is True
+        """含 '[' 标记 → hint (不是 contains, [ 太泛化)."""
+        assert _is_substring_check("[example](url)") is False
 
 
 # =============================================================================

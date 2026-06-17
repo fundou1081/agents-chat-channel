@@ -21,17 +21,15 @@ from .schema import CheckItem, CheckResult
 
 
 # 启发式: 看起来像 "must contain" 的字符串特征
+# 只保留明确的标记字符 (移除过于泛化的 _ { [ )
 _SUBSTRING_MARKERS = (
     "## ",    # markdown h2
     "# ",     # markdown h1
     "**",     # bold
-    "_",      # italic
-    "`",      # code
+    "`",      # code (backtick)
     "<",      # html tag
     "---",    # hr / frontmatter
-    '"',      # JSON
-    "{",      # JSON object
-    "[",      # markdown link
+    '"',      # JSON key/value (引号)
 )
 
 

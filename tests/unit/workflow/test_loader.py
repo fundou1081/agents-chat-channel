@@ -266,15 +266,15 @@ stages:
             load_workflow_from_string(yaml)
 
     def test_invalid_stage_id(self):
-        """stage id 含大写 (regex 限制)."""
+        """stage id 以数字开头 (regex 限制)."""
         yaml = """
 name: invalid
 stages:
-  - id: InvalidStage
+  - id: "1stage"
     workers: [{id: w}]
     deliverable: {path: out/a.json}
 """
-        with pytest.raises(ValidationError, match="stage id 'InvalidStage' must match"):
+        with pytest.raises(ValidationError, match="stage id '1stage' must match"):
             load_workflow_from_string(yaml)
 
     def test_invalid_worker_id(self):

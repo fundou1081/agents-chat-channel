@@ -23,8 +23,8 @@ from typing import Any, Literal, Optional, Union
 from pydantic import BaseModel, Field, model_validator
 
 
-# ID 验证: 跟 stage/worker id 一致, 全小写 + 数字 + -_
-_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_-]*$")
+# ID 验证: 跟 stage/worker id 一致, 小写/大写 + 数字 + -_
+_ID_PATTERN = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]*$")
 
 
 # =============================================================================
@@ -43,7 +43,7 @@ class WorkerSpec(BaseModel):
     """
     id: str = Field(..., min_length=1, max_length=64)
     cli: Literal["mock", "opencode", "qwen", "a2a"] = "opencode"
-    model: str = "opencode/deepseek-v4-flash-free"
+    model: str = ""   # 空 = 用 CLI 默认模型
     system_prompt: str = ""
 
     @model_validator(mode="after")
