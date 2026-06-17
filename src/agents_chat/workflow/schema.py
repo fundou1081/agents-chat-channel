@@ -153,6 +153,22 @@ class DeliverableSpec(BaseModel):
 # =============================================================================
 
 
+class RetrySpec(BaseModel):
+    """Stage 重试配置.
+
+    例:
+      retry:
+        max_attempts: 3           # 最多 3 次 (含首次)
+        backoff: exponential       # fixed / exponential
+        initial_delay: 5.0         # 首次重试前等 5s
+        max_delay: 60.0            # 防止指数爆炸
+    """
+    max_attempts: int = Field(1, ge=1, le=10)
+    backoff: Literal["none", "fixed", "exponential"] = "none"
+    initial_delay: float = Field(5.0, ge=0.0, le=600.0)
+    max_delay: float = Field(60.0, ge=1.0, le=3600.0)
+
+
 class StageSpec(BaseModel):
     """DAG 节点 (v2 schema).
 
@@ -170,6 +186,7 @@ class StageSpec(BaseModel):
     timeout: int = 600              # 秒, 默认 10 分钟
     workers: list[WorkerSpec] = Field(..., min_length=1)
     deliverable: DeliverableSpec
+    retry: RetrySpec = Field(default_factory=RetrySpec)  # 重试配置 (默认不重试)
 
     @model_validator(mode="after")
     def _validate_id(self):

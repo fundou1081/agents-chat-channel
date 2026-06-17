@@ -881,6 +881,46 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
         registry = WorkflowRegistry.get_default()
         return {"active": registry.list_active()}
 
+    @app.get("/api/workflows/registry")
+    def list_registered_workflows(scan_dir: str = "examples"):
+        """列已注册的 workflow YAML (扫盘).
+
+        Args:
+            scan_dir: 相对 data_dir 的目录 (default 'examples').
+                      也可传绝对路径.
+        """
+        from ..workflow.loader import load_workflow
+
+        scan_path = Path(scan_dir)
+        if not scan_path.is_absolute():
+            scan_path = data_dir.parent / scan_dir  # data_dir 之上是项目根
+        if not scan_path.is_dir():
+            return {"yaml_files": [], "error": f"directory not found: {scan_path}"}
+
+        result = []
+        for yaml_file in sorted(scan_path.rglob("*.yaml")) + sorted(scan_path.rglob("*.yml")):
+            # 跳过 node_modules 等
+            if any(p in yaml_file.parts for p in ("node_modules", ".git", "__pycache__")):
+                continue
+            try:
+                spec = load_workflow(yaml_file)
+                stages = spec.topological_order()
+                result.append({
+                    "yaml_path": str(yaml_file.relative_to(scan_path)),
+                    "abs_path": str(yaml_file),
+                    "name": spec.name,
+                    "description": spec.description,
+                    "stage_count": len(spec.stages),
+                    "stages": [s.id for s in stages],
+                })
+            except (ValueError, FileNotFoundError) as e:
+                result.append({
+                    "yaml_path": str(yaml_file.relative_to(scan_path)),
+                    "abs_path": str(yaml_file),
+                    "error": str(e),
+                })
+        return {"yaml_files": result, "scan_dir": str(scan_path)}
+
     @app.get("/api/workflows/{run_id}")
     def get_workflow_run(run_id: str):
         """获取单个 workflow run 的详细状态."""

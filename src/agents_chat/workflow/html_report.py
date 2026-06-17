@@ -15,10 +15,33 @@ HTML 输出:
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Optional
 
 from .schema import StageSpec, WorkflowSpec
 from .scheduler import WorkflowRunResult
+
+
+# =============================================================================
+# Time helpers
+# =============================================================================
+
+
+def _parse_iso_ts(ts: Optional[str]) -> str:
+    """Parse ISO timestamp → 形如 '2026-06-15 10:00:00'.
+
+    支持 'Z' 后缀 + '±HH:MM' 时区. None → '?'.
+    """
+    if not ts:
+        return "?"
+    try:
+        # 替换 Z 为 +00:00 (Python <3.11 不支持 Z)
+        normalized = ts.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(normalized)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        # 兜底: 截断 19 字符
+        return ts[:19] if len(ts) >= 19 else ts
 
 
 # =============================================================================
@@ -92,10 +115,10 @@ def _render_stage_cards(
 
         state_icon = {"success": "✅", "failed": "❌", "running": "🔄", "pending": "⏳"}.get(state, "⏳")
 
-        # Worker list
+        # Worker list (含 model)
         worker_lines = ""
         for w in stage.workers:
-            model_str = f" (model={w.model})" if w.model else ""
+            model_str = f" <code>{w.model}</code>" if w.model else ""
             worker_lines += f'        <li>{w.id} / {w.cli}{model_str}</li>\n'
 
         # Checks result
@@ -162,11 +185,13 @@ def render_workflow_html(
     wf_name = title or spec.name
     run_info = ""
     if result:
-        status_emoji = {"success": "✅", "failed": "❌", "running": "🔄"}.get(result.status, "")
+        status_emoji = {"success": "✅", "failed": "❌", "running": "🔄", "canceled": "⏸"}.get(result.status, "")
+        started = _parse_iso_ts(result.started_at)
+        finished = _parse_iso_ts(result.finished_at)
         run_info = f"""
     <div class="run-meta">
       <h2>{status_emoji} Run: {result.run_id}</h2>
-      <p>Status: <strong>{result.status}</strong> | Started: {result.started_at[:19]} | Finished: {(result.finished_at or '?')[:19]}</p>
+      <p>Status: <strong>{result.status}</strong> | Started: {started} | Finished: {finished}</p>
       {"<p class='failed-stage'>❌ Failed at: " + result.failed_stage + "</p>" if result.failed_stage else ""}
     </div>"""
 

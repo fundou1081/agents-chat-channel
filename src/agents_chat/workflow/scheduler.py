@@ -142,6 +142,8 @@ class WorkflowScheduler:
         self._stage_channels: dict[str, Path] = {}
         # 取消标志 (在 cancel() 设置)
         self._cancel_requested: bool = False
+        # 每个 stage 的重试次数 (key=stage_id, value=int)
+        self._stage_retry_attempts: dict[str, int] = {}
 
     # =================================================================
     # 主循环
@@ -195,8 +197,27 @@ class WorkflowScheduler:
                     return self._finalize()
 
                 if not success:
+                    # 失败: 考虑 retry
+                    attempts = self._stage_retry_attempts.get(stage.id, 0)
+                    max_attempts = stage.retry.max_attempts
+                    if attempts + 1 < max_attempts:
+                        # 还能重试
+                        delay = self._compute_retry_delay(stage, attempts)
+                        logger.warning(
+                            f"[workflow {self.run_id}] stage '{stage.id}' failed "
+                            f"(attempt {attempts + 1}/{max_attempts}), "
+                            f"retrying in {delay:.1f}s"
+                        )
+                        self._stage_retry_attempts[stage.id] = attempts + 1
+                        self._cleanup_stage(stage)
+                        await asyncio.sleep(delay)
+                        # 不记入 upstream_deliverables, 不设 stage_states
+                        # 重新进 stage loop (用 continue 跳到下一次)
+                        continue
+                    # 重试用完
                     logger.error(
-                        f"[workflow {self.run_id}] stage '{stage.id}' failed/timed out"
+                        f"[workflow {self.run_id}] stage '{stage.id}' failed "
+                        f"after {attempts + 1} attempt(s)"
                     )
                     self.result.stage_states[stage.id] = "failed"
                     self.result.failed_stage = stage.id
@@ -493,6 +514,17 @@ class WorkflowScheduler:
                 logger.warning(
                     f"[workflow {self.run_id}] handoff {upstream_id} → {dst} failed: {e}"
                 )
+
+    def _compute_retry_delay(self, stage: StageSpec, attempt: int) -> float:
+        """算 retry 前的等待秒数. attempt = 0 表示第 1 次失败, 准备第 2 次."""
+        r = stage.retry
+        if r.backoff == "none":
+            return 0.0
+        if r.backoff == "fixed":
+            delay = r.initial_delay
+        else:  # exponential
+            delay = r.initial_delay * (2 ** attempt)
+        return min(delay, r.max_delay)
 
     def _cleanup_stage(self, stage: StageSpec) -> None:
         """删私有 channel 文件, 保留 deliverable."""
