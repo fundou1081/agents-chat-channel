@@ -10,7 +10,7 @@ WorkflowScheduler 测试.
   6. test_wait_stage_done_timeout - timeout 触发
   7. test_wait_stage_done_checks_pass - v2 checks pass
   8. test_wait_stage_done_checks_fail - v2 checks fail
-  9. test_handoff_deliverable - 文件复制到下游 workspace
+  9. test_handoff_to_stage - 文件复制到下游 workspace
   10. test_cleanup_stage - 删私有 channel
   11. test_run_full_success - 端到端 (mock worker)
   12. test_run_with_failure - stage 失败 → workflow 失败
@@ -207,7 +207,7 @@ class TestWaitStageDone:
 
 
 # =============================================================================
-# _handoff_deliverable 测试
+# _handoff_to_stage 测试
 # =============================================================================
 
 
@@ -221,7 +221,7 @@ class TestHandoffDeliverable:
         write_deliverable(upstream_deliverable, '{"sources": ["a"]}')
 
         # handoff 到 stage b 的 worker workspace
-        scheduler._handoff_deliverable(
+        scheduler._handoff_to_stage(
             spec.stages[1],  # stage b
             upstream_deliverables=[("a", upstream_deliverable)],
         )
@@ -235,7 +235,7 @@ class TestHandoffDeliverable:
         spec = load_workflow_from_string(make_simple_workflow_yaml())
         scheduler = WorkflowScheduler(spec, tmp_path)
         # 无 upstream, 不报错, 不做事
-        scheduler._handoff_deliverable(spec.stages[0], [])
+        scheduler._handoff_to_stage(spec.stages[0], [])
 
 
 # =============================================================================

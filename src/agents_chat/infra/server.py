@@ -894,7 +894,7 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
 
         yaml_path = Path(req.yaml_path)
         if not yaml_path.is_absolute():
-            yaml_path = data_dir / req.yaml
+            yaml_path = data_dir / req.yaml_path
         if not yaml_path.exists():
             raise HTTPException(status_code=404, detail=f"YAML not found: {yaml_path}")
 
@@ -926,7 +926,7 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
 
         yaml_path = Path(req.yaml_path)
         if not yaml_path.is_absolute():
-            yaml_path = data_dir / req.yaml
+            yaml_path = data_dir / req.yaml_path
         if not yaml_path.exists():
             raise HTTPException(status_code=404, detail=f"YAML not found: {yaml_path}")
 
@@ -978,14 +978,20 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
             stage_states=run_data.get("stage_states", {}),
         )
 
-        # HTML: 需要 spec → 从 stage_states 构造简化 DAG
+        # HTML: 需要 spec → 从 stage_deps 重建完整 DAG (含边)
         from ..workflow.schema import WorkflowSpec, StageSpec, WorkerSpec, DeliverableSpec
+        stage_deps = run_data.get("stage_deps", {})
         stage_ids = list(run_data.get("stage_states", {}).keys())
         if not stage_ids:
             raise HTTPException(status_code=400, detail="no stage data in run")
         
         stages = [
-            StageSpec(id=sid, workers=[WorkerSpec(id=sid + "-w", cli="mock")], deliverable=DeliverableSpec(path="out/x.json"))
+            StageSpec(
+                id=sid,
+                depends_on=stage_deps.get(sid, []),
+                workers=[WorkerSpec(id=sid + "-w", cli="mock")],
+                deliverable=DeliverableSpec(path="out/x.json"),
+            )
             for sid in stage_ids
         ]
         spec = WorkflowSpec(name=run_data.get("workflow_name", "?"), stages=stages)

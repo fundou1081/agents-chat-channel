@@ -48,6 +48,7 @@ class WorkflowRunResult:
         failed_stage: Optional[str] = None,
         stage_states: Optional[dict[str, str]] = None,  # stage_id -> state
         check_results: Optional[dict[str, dict]] = None,  # stage_id -> CheckResult
+        stage_deps: Optional[dict[str, list[str]]] = None,  # stage_id -> [depends_on]
     ):
         self.workflow_name = workflow_name
         self.run_id = run_id
@@ -57,6 +58,7 @@ class WorkflowRunResult:
         self.failed_stage = failed_stage
         self.stage_states = stage_states or {}
         self.check_results = check_results or {}
+        self.stage_deps = stage_deps or {}
 
     def to_dict(self) -> dict:
         return {
@@ -67,6 +69,7 @@ class WorkflowRunResult:
             "finished_at": self.finished_at,
             "failed_stage": self.failed_stage,
             "stage_states": self.stage_states,
+            "stage_deps": self.stage_deps,
             "check_results": {
                 sid: {
                     "all_passed": r.all_passed,
@@ -182,12 +185,11 @@ class WorkflowScheduler:
                     self.result.status = "failed"
                     return self._finalize()
 
-                # 2c. Stage 完: 记录 deliverable, handoff, cleanup
+                # 2c. Stage 完: 记录 deliverable, cleanup
                 self.result.stage_states[stage.id] = "success"
                 primary_path = self._get_deliverable_primary_path(stage)
                 if primary_path:
                     upstream_deliverables.append((stage.id, primary_path))
-                self._handoff_deliverable(stage, upstream_deliverables)
                 self._cleanup_stage(stage)
 
                 # single_stage 模式: 跑完一个就 exit
@@ -225,6 +227,9 @@ class WorkflowScheduler:
         # 持久化
         self.result.finished_at = datetime.now(timezone.utc).isoformat()
         self.result.check_results = dict(self._stage_check_results)
+        self.result.stage_deps = {
+            s.id: list(s.depends_on) for s in self.workflow.stages
+        }
         self._save_run_state()
         return self.result
 
@@ -264,6 +269,9 @@ class WorkflowScheduler:
         self._stage_channels[stage.id] = (
             self.data_dir / "channels" / f"{channel_name}.jsonl"
         )
+
+        # Handoff: 复制上游 deliverable 到当前 stage 的 worker workspace
+        self._handoff_to_stage(stage, upstream_deliverables)
 
         # Spawn workers (用 WorkerFactory)
         agents = await asyncio.to_thread(
@@ -378,18 +386,18 @@ class WorkflowScheduler:
         )
         return False
 
-    def _handoff_deliverable(
+    def _handoff_to_stage(
         self,
         stage: StageSpec,
         upstream_deliverables: list[tuple[str, Path]],
     ) -> None:
-        """把 deliverable 复制到下游 stage 的 worker workspace."""
+        """把上游 deliverable 复制到当前 stage 的 worker workspace.
+
+        在 _start_stage 时调用，确保下游 stage 的 worker 启动前有完整的
+        stage_inputs/ 目录（含所有上游阶段的产出）。
+        """
         if not upstream_deliverables:
             return
-        # 找 stage 自己的 deliverable (最后一个上游)
-        # upstream_deliverables 包含 [之前所有 stage 的 (id, path)]
-        # 我们要复制**所有** upstream (下游要全看到)
-        # 注意: 简单实现复制所有 upstream, 实际下游可能只需要部分
         handoff_paths = build_input_handoff_paths(
             stage, upstream_deliverables, self.data_dir
         )
