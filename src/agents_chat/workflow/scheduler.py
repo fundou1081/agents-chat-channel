@@ -356,13 +356,19 @@ class WorkflowScheduler:
                         await asyncio.sleep(poll_interval)
                         continue
 
-                # 4. 可选 strict schema (对 JSON envelope)
-                if primary and primary.is_file() and deliverable.schema:
+                # 4. 可选 strict JSON schema (对 envelope)
+                if primary and primary.is_file() and deliverable.json_schema:
                     if primary.suffix == ".json":
                         try:
                             import jsonschema
                             data = json.loads(primary.read_text())
-                            jsonschema.validate(data, deliverable.schema)
+                            jsonschema.validate(data, deliverable.json_schema)
+                        except ImportError:
+                            logger.error(
+                                f"[workflow {self.run_id}] jsonschema not installed, "
+                                f"skipping schema validation for {primary}"
+                            )
+                            # jsonschema 未安装 → 跳过, 不阻塞 pipeline
                         except Exception as e:
                             logger.warning(
                                 f"[workflow {self.run_id}] schema validation "

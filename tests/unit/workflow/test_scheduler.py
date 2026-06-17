@@ -357,3 +357,64 @@ class TestSchedulerE2E:
         saved = json.loads(run_file.read_text())
         assert saved["status"] == "success"
         assert saved["workflow_name"] == "test-pipeline"
+
+
+# =============================================================================
+# Edge cases (T26: 补充 max_size / json_schema / stage_deps)
+# =============================================================================
+
+
+class TestEdgeCases:
+    @pytest.mark.asyncio
+    async def test_max_size_overflow(self, tmp_path: Path):
+        """max_size overflow → 文件过大被拒绝, stage fail."""
+        spec = load_workflow_from_string(make_simple_workflow_yaml())
+        spec.stages[0].deliverable.max_size = 5  # 只能 5 字节
+        spec.stages[0].deliverable.checks = []  # 清掉 checks
+        spec.stages[0].timeout = 5
+        write_deliverable(tmp_path / "out" / "a.json", "this is way too big")
+        scheduler = WorkflowScheduler(spec, tmp_path)
+        success = await scheduler._wait_stage_done(spec.stages[0])
+        assert success is False
+
+    @pytest.mark.asyncio
+    async def test_json_schema_validation(self, tmp_path: Path):
+        """json_schema validate envelope 结构."""
+        import json
+        spec = load_workflow_from_string(make_simple_workflow_yaml())
+        spec.stages[0].timeout = 5
+        spec.stages[0].deliverable.checks = []  # 清掉 base checks, 只测 json_schema
+        spec.stages[0].deliverable.json_schema = {
+            "type": "object",
+            "required": ["ok"],
+            "properties": {"ok": {"type": "boolean"}},
+        }
+        write_deliverable(tmp_path / "out" / "a.json", json.dumps({"ok": False}))
+        scheduler = WorkflowScheduler(spec, tmp_path)
+        success = await scheduler._wait_stage_done(spec.stages[0])
+        assert success is True
+
+    @pytest.mark.asyncio
+    async def test_json_schema_validation_fail(self, tmp_path: Path):
+        """json_schema 不匹配 → stage fail."""
+        import json
+        spec = load_workflow_from_string(make_simple_workflow_yaml())
+        spec.stages[0].timeout = 5
+        spec.stages[0].deliverable.checks = []  # 清掉 base checks
+        spec.stages[0].deliverable.json_schema = {
+            "type": "object",
+            "required": ["ok"],
+            "properties": {"ok": {"type": "boolean"}},
+        }
+        # 缺少 "ok" 字段
+        write_deliverable(tmp_path / "out" / "a.json", json.dumps({"bad": True}))
+        scheduler = WorkflowScheduler(spec, tmp_path)
+        success = await scheduler._wait_stage_done(spec.stages[0])
+        assert success is False
+
+    def test_stage_deps_in_result(self, tmp_path: Path):
+        """WorkflowRunResult.to_dict() 含 stage_deps."""
+        result = WorkflowRunResult("test", "run-1", stage_deps={"a": [], "b": ["a"]})
+        d = result.to_dict()
+        assert "stage_deps" in d
+        assert d["stage_deps"] == {"a": [], "b": ["a"]}

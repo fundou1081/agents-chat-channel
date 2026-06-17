@@ -72,8 +72,9 @@ class DeliverableSpec(BaseModel):
       - format / formats: hint, 不强制
       - checks: 统一检查列表 (字符串启发式 + dict 高级)
       - min_size / max_size: scheduler 轻校验
-      - schema: 可选 strict JSON Schema (envelope 校验)
+      - json_schema: 可选 strict JSON Schema (YAML key: schema)
     """
+    model_config = {"populate_by_name": True}
     # ===== 必填: 路径 (3 选 1) =====
     path: Optional[str] = None       # 单文件, e.g. "data/findings.md"
     paths: Optional[list[str]] = None # 多文件, e.g. ["a.md", "b.json"]
@@ -89,9 +90,11 @@ class DeliverableSpec(BaseModel):
     max_size: Optional[int] = None   # 字符, 避免异常大
 
     # ===== 严格校验 (可选) =====
-    schema: Optional[dict] = None  # JSON Schema, 校验 envelope 结构
-    # 注: 名字跟 Pydantic BaseModel.schema() 方法冲突, 会有 UserWarning
-    # (Pydantic v2 仍 work, 但建议 Pydantic v3 改名为 json_schema)
+    json_schema: Optional[dict] = Field(
+        None,
+        alias="schema",  # YAML 中仍用 schema: 键名
+        description="JSON Schema for envelope validation (YAML key: schema)",
+    )
 
     @model_validator(mode="after")
     def _validate_path_exclusive(self):
@@ -297,11 +300,11 @@ class WorkflowSpec(BaseModel):
 
 class CheckItem(BaseModel):
     """单条 check 的执行结果."""
-    raw: Any                         # 原始 check (str / dict / list 等)
-    type: str                        # hint | contains | contains_any | contains_all | min_keywords | regex
+    raw: Union[str, list, dict]   # 原始 check (字符串 / 列表 / 字典)
+    type: str                      # hint | contains | contains_any | contains_all | min_keywords | regex
     passed: bool
-    detail: str = ""                # 详细说明 (e.g. "found 2/3 keywords")
-    value: Any = None               # 期望值 (debug 用, 可以是 list)
+    detail: str = ""              # 详细说明 (e.g. "found 2/3 keywords")
+    value: Any = None             # 期望值 (debug 用, 可以是 list)
 
 
 class CheckResult(BaseModel):
