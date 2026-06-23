@@ -144,6 +144,10 @@ class WorkflowScheduler:
         self._cancel_requested: bool = False
         # 每个 stage 的重试次数 (key=stage_id, value=int)
         self._stage_retry_attempts: dict[str, int] = {}
+        # Stage 启动时间戳 (verify mtime 用, key=stage_id, value=epoch)
+        self._stage_start_ts: dict[str, float] = {}
+        # Agent reply 计数 (key=stage_id, value=int - 收到 [STATUS] block 数)
+        self._stage_replies: dict[str, int] = {}
 
     # =================================================================
     # 主循环
@@ -421,6 +425,9 @@ class WorkflowScheduler:
         self._stage_channels[stage.id] = (
             self.data_dir / "channels" / f"{channel_name}.jsonl"
         )
+        # 记下 stage 启动时间 (验证文件 mtime 用, 防 LLM 谎报)
+        self._stage_start_ts[stage.id] = time.time()
+        self._stage_replies[stage.id] = 0
 
         # Handoff: 复制上游 deliverable 到当前 stage 的 worker workspace
         self._handoff_to_stage(stage, upstream_deliverables)
@@ -460,9 +467,19 @@ class WorkflowScheduler:
         )
 
     async def _wait_stage_done(self, stage: StageSpec) -> bool:
-        """等 deliverable + checks 校验 + timeout. 返 True = done."""
+        """等 deliverable + verify-after-claim + timeout. 返 True = done.
+
+        Round 7 改动: verify-after-claim (防 LLM hallucination)
+          除了文件存在 + size 满足, 还要满足两个新条件:
+          1. deliverable mtime > stage_start_ts (避免预先存在的文件误判)
+          2. 至少 1 个 agent reply 含 [STATUS] block (声明完成)
+          任一不满足 → 走 retry 路径 (LLM 谎报 → 强制重试)
+        """
         deliverable = stage.deliverable
         deadline = time.time() + stage.timeout
+        stage_start = self._stage_start_ts.get(stage.id)
+        # Legacy 模式: 未走 _start_stage → stage_start 未设 → 跳过 verify-after-claim
+        legacy_mode = stage_start is None
 
         # 计算校验路径列表
         paths_to_check = self._get_all_deliverable_paths(stage)
@@ -474,12 +491,43 @@ class WorkflowScheduler:
 
         # Poll 循环
         poll_interval = self.poll_interval
+        channel_path = self._stage_channels.get(stage.id)
+
         while time.time() < deadline:
-            # 1. 路径存在
+            # 1. 路径存在 + 计数 agent [STATUS] reply (防 LLM 谎报)
+            self._count_stage_replies(stage.id, channel_path)
+            replies = self._stage_replies.get(stage.id, 0)
+
+            # 1.5 Fast-fail: agent 说完成 [STATUS] + 文件不存在 → LLM 谎报
+            if not legacy_mode and replies > 0 and not all(p.exists() for p in paths_to_check):
+                logger.error(
+                    f"[workflow {self.run_id}] stage '{stage.id}' "
+                    f"agent replied [STATUS] (count={replies}) but deliverable "
+                    f"{paths_to_check} NOT exist → LLM hallucination/failed write"
+                )
+                # 不马上返 False: 给 agent 10s 重试机会
+                # 如果 agent 已经在重试, 可能补上文件
+                grace_deadline = time.time() + 10.0
+                while time.time() < grace_deadline and not all(p.exists() for p in paths_to_check):
+                    self._count_stage_replies(stage.id, channel_path)
+                    await asyncio.sleep(1.0)
+                if not all(p.exists() for p in paths_to_check):
+                    logger.error(
+                        f"[workflow {self.run_id}] stage '{stage.id}' "
+                        f"fast-fail: agent lied or write failed"
+                    )
+                    return False
+
             if all(p.exists() for p in paths_to_check):
-                # 2. Size 检查
                 primary = self._get_deliverable_primary_path(stage)
                 if primary and primary.is_file():
+                    # 2. mtime 验证 (文件是这次 stage 写的, 不是预存的)
+                    if legacy_mode:
+                        mtime_ok = True  # 跳过 verify, 让 legacy 测试过
+                    else:
+                        mtime_ok = primary.stat().st_mtime >= stage_start - 5.0  # -5s 容错 (CLI 启动 mtime 比 stage_start 晚是正常 race)
+
+                    # 3. Size 检查 (硬性, blocking)
                     size = primary.stat().st_size
                     if size < deliverable.min_size:
                         logger.warning(
@@ -496,28 +544,45 @@ class WorkflowScheduler:
                         await asyncio.sleep(poll_interval)
                         continue
 
-                # 3. Checks 校验 (v2)
-                if primary and primary.is_file() and deliverable.checks:
-                    try:
-                        content = primary.read_text(encoding="utf-8", errors="replace")
-                    except Exception as e:
-                        logger.warning(f"read {primary} failed: {e}")
-                        await asyncio.sleep(poll_interval)
-                        continue
-                    check_result = evaluate_checks(deliverable.checks, content)
-                    self._stage_check_results[stage.id] = check_result
-                    if not check_result.all_passed:
-                        failed = check_result.failed_items()
-                        # 非阻塞: deliverable 存在 + size 满足, checks 是建议性验证
-                        logger.warning(
-                            f"[workflow {self.run_id}] stage '{stage.id}' "
-                            f"checks not all passed (non-blocking): "
-                            f"{[(i.type, i.detail) for i in failed]}"
-                        )
+                    # 4. Verify-after-claim: mtime + reply 都要满足 (跳过 legacy)
+                    if not legacy_mode:
+                        if not mtime_ok:
+                            logger.warning(
+                                f"[workflow {self.run_id}] stage '{stage.id}' "
+                                f"deliverable mtime {primary.stat().st_mtime:.1f} "
+                                f"< stage start {stage_start:.1f} (预存文件? retry)"
+                            )
+                            await asyncio.sleep(poll_interval)
+                            continue
+                        if replies == 0:
+                            logger.warning(
+                                f"[workflow {self.run_id}] stage '{stage.id}' "
+                                f"deliverable exists but 0 agent [STATUS] reply yet "
+                                f"(LLM 谎报? 等 agent reply)"
+                            )
+                            await asyncio.sleep(poll_interval)
+                            continue
 
-                # 4. 可选 strict JSON schema (对 envelope)
-                if primary and primary.is_file() and deliverable.json_schema:
-                    if primary.suffix == ".json":
+                    # 5. Checks 校验 (v2) - non-blocking
+                    if deliverable.checks:
+                        try:
+                            content = primary.read_text(encoding="utf-8", errors="replace")
+                        except Exception as e:
+                            logger.warning(f"read {primary} failed: {e}")
+                            await asyncio.sleep(poll_interval)
+                            continue
+                        check_result = evaluate_checks(deliverable.checks, content)
+                        self._stage_check_results[stage.id] = check_result
+                        if not check_result.all_passed:
+                            failed = check_result.failed_items()
+                            logger.warning(
+                                f"[workflow {self.run_id}] stage '{stage.id}' "
+                                f"checks not all passed (non-blocking): "
+                                f"{[(i.type, i.detail) for i in failed]}"
+                            )
+
+                    # 6. 可选 strict JSON schema - non-blocking
+                    if deliverable.json_schema and primary.suffix == ".json":
                         try:
                             import jsonschema
                             data = json.loads(primary.read_text())
@@ -527,19 +592,18 @@ class WorkflowScheduler:
                                 f"[workflow {self.run_id}] jsonschema not installed, "
                                 f"skipping schema validation for {primary}"
                             )
-                            # jsonschema 未安装 → 跳过, 不阻塞 pipeline
                         except Exception as e:
-                            # 非阻塞: schema mismatch 是 hints, 不阻 pipeline
                             logger.warning(
                                 f"[workflow {self.run_id}] schema validation "
                                 f"failed (non-blocking): {e}"
                             )
 
-                # 全部 pass (size + 文件存在 + checks 警告已 log), stage done
-                logger.info(
-                    f"[workflow {self.run_id}] stage '{stage.id}' deliverable OK"
-                )
-                return True
+                    # 全部 verify pass (存在 + size + mtime + reply)
+                    logger.info(
+                        f"[workflow {self.run_id}] stage '{stage.id}' deliverable OK "
+                        f"(mtime={primary.stat().st_mtime:.1f}, replies={replies})"
+                    )
+                    return True
 
             # 还没 done, 等
             await asyncio.sleep(poll_interval)
@@ -549,6 +613,49 @@ class WorkflowScheduler:
             f"[workflow {self.run_id}] stage '{stage.id}' timeout after {stage.timeout}s"
         )
         return False
+
+    def _count_stage_replies(self, stage_id: str, channel_path) -> None:
+        """数 [STATUS] block 在 stage channel 里 (agent 真正完成的信号).
+
+        只数 mtime 晚于 stage 启动的 reply (排除预存的).
+        """
+        if channel_path is None or not channel_path.exists():
+            return
+        stage_start = self._stage_start_ts.get(stage_id, 0)
+        count = 0
+        try:
+            with channel_path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        msg = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    # msg 字段是 'from', 内容含 [STATUS] block + 进度=100
+                    if msg.get("type") != "reply":
+                        continue
+                    # 检查 mtime (channel 的 ts 是 ISO, 转 epoch)
+                    ts = msg.get("ts", "")
+                    if ts:
+                        try:
+                            ts_epoch = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+                            if ts_epoch < stage_start:
+                                continue  # 老消息, 不数
+                        except (ValueError, TypeError):
+                            pass
+                    content = msg.get("content", "")
+                    # 接受两种 STATUS 格式:
+                    #   - [STATUS] ... [/STATUS] (CLI reply template)
+                    #   - <!--STATUS ... --> (event_handler 的 status_report)
+                    has_status_marker = "[STATUS]" in content or "<!--STATUS" in content
+                    has_status = has_status_marker and "progress: 100" in content
+                    if has_status:
+                        count += 1
+        except OSError:
+            pass
+        self._stage_replies[stage_id] = count
 
     def _handoff_to_stage(
         self,

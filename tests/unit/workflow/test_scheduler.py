@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -74,6 +75,27 @@ def write_deliverable(path: Path, content: str = "## ok\ndata") -> None:
     """模拟 worker 写完 deliverable."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def write_agent_status_reply(channel_path: Path, agent_id: str = "worker") -> None:
+    """模拟 agent 在 stage 私有 channel 发 [STATUS] reply.
+
+    Round 7: verify-after-claim 要求 scheduler 看到 [STATUS] block 才认 success.
+    使用动态 timestamp (now UTC) 避免被 mtime 过滤当作"老消息"扔掉.
+    """
+    channel_path.parent.mkdir(parents=True, exist_ok=True)
+    now_ts = datetime.now(timezone.utc).isoformat()
+    msg = {
+        "id": f"ch_{agent_id}_test",
+        "ts": now_ts,
+        "from": agent_id,
+        "content": "<!--STATUS\n progress: 100\n summary: 完成\n next_action: 成交\n-->",
+        "type": "reply",
+        "mentions": [],
+        "task_id": "test-task",
+    }
+    with channel_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(msg, ensure_ascii=False) + "\n")
 
 
 # =============================================================================
@@ -332,12 +354,16 @@ class TestSchedulerE2E:
 
         # 3 stage 并行模拟 (在 scheduler 跑的同时)
         async def mock_workers():
+            run_id = scheduler.run_id  # 拿真实 run_id
             await asyncio.sleep(0.5)  # 等 stage a 启
             write_deliverable(tmp_path / "out" / "a.json")
+            write_agent_status_reply(tmp_path / "channels" / f".stage-a-run-{run_id}.jsonl", "worker_a")
             await asyncio.sleep(2)    # 等 stage b
             write_deliverable(tmp_path / "out" / "b.json")
+            write_agent_status_reply(tmp_path / "channels" / f".stage-b-run-{run_id}.jsonl", "worker_b")
             await asyncio.sleep(2)    # 等 stage c
             write_deliverable(tmp_path / "out" / "c.json")
+            write_agent_status_reply(tmp_path / "channels" / f".stage-c-run-{run_id}.jsonl", "worker_c")
 
         # 跑 scheduler, 同时跑 mock_workers
         scheduler_task = asyncio.create_task(scheduler.run())
@@ -450,3 +476,60 @@ class TestEdgeCases:
         scheduler = WorkflowScheduler(spec, tmp_path)
         success = await scheduler._wait_stage_done(spec.stages[0])
         assert success is False  # min_size 仍 block
+
+    @pytest.mark.asyncio
+    async def test_fast_fail_when_agent_lied(self, tmp_path: Path):
+        """Round 7: agent replied [STATUS] 但文件不存在 → fast-fail (< 30s)."""
+        spec = load_workflow_from_string(make_simple_workflow_yaml())
+        spec.stages[0].timeout = 60  # 长 timeout, 验证 fast-fail 不靠 timeout
+        scheduler = WorkflowScheduler(spec, tmp_path)
+        # 模拟 _start_stage 走了, 设 start_ts + channel
+        scheduler._stage_start_ts[spec.stages[0].id] = time.time()
+        chan_path = tmp_path / "channels" / ".stage-a-run-test.jsonl"
+        scheduler._stage_channels[spec.stages[0].id] = chan_path
+        # Agent 立即说 [STATUS] 完成了, 但实际没写文件
+        write_agent_status_reply(chan_path, "worker_a")
+        # 不写 deliverable
+        # Fast-fail 应在 10s grace + 检测时间 内返 False
+        start = time.time()
+        success = await scheduler._wait_stage_done(spec.stages[0])
+        elapsed = time.time() - start
+        assert success is False
+        assert elapsed < 30  # fast-fail, 不是等 60s timeout
+
+    @pytest.mark.asyncio
+    async def test_verify_after_claim_requires_recent_mtime(self, tmp_path: Path):
+        """文件存在 + mtime 老 (< stage_start) → 等 agent 补"""
+        spec = load_workflow_from_string(make_simple_workflow_yaml())
+        spec.stages[0].timeout = 5
+        scheduler = WorkflowScheduler(spec, tmp_path)
+        # 模拟 _start_stage 走了
+        scheduler._stage_start_ts[spec.stages[0].id] = time.time() + 10  # stage "启动了" 10s 后
+        chan_path = tmp_path / "channels" / ".stage-a-run-test.jsonl"
+        scheduler._stage_channels[spec.stages[0].id] = chan_path
+        # 写个老文件 (mtime 在 stage_start 之前)
+        write_deliverable(tmp_path / "out" / "a.json", "## ok\nold")
+        # mtime 老 → 不会成功, 等到 timeout
+        success = await scheduler._wait_stage_done(spec.stages[0])
+        assert success is False  # 老文件不算
+
+    @pytest.mark.asyncio
+    async def test_fast_fail_when_agent_lied(self, tmp_path: Path):
+        """Round 7: agent replied [STATUS] 但文件不存在 → fast-fail (< 30s)."""
+        spec = load_workflow_from_string(make_simple_workflow_yaml())
+        spec.stages[0].timeout = 60  # 长 timeout, 验证 fast-fail 不靠 timeout
+        scheduler = WorkflowScheduler(spec, tmp_path)
+        # 模拟 _start_stage 走了, 设 start_ts + channel
+        scheduler._stage_start_ts[spec.stages[0].id] = time.time()
+        chan_path = tmp_path / "channels" / ".stage-a-run-test.jsonl"
+        scheduler._stage_channels[spec.stages[0].id] = chan_path
+        # Agent 立即说 [STATUS] 完成了, 但实际没写文件
+        write_agent_status_reply(chan_path, "worker_a")
+        # 不写 deliverable
+        # Fast-fail 应在 10s grace + 检测时间 内返 False
+        start = time.time()
+        success = await scheduler._wait_stage_done(spec.stages[0])
+        elapsed = time.time() - start
+        assert success is False
+        assert elapsed < 30  # fast-fail, 不是等 60s timeout
+
