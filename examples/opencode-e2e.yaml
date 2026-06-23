@@ -1,0 +1,37 @@
+name: opencode-e2e
+description: "真 E2E pipeline - 用 OpenCode CLI 实际调 LLM (LLM-friendly checks)"
+stages:
+  - id: draft
+    timeout: 180
+    workers:
+      - id: writer
+        cli: opencode
+        model: opencode/big-pickle
+        system_prompt: |
+          你是产品营销 writer.
+          写一个 200 字的产品介绍, 主题: 智能代码 review 工具.
+          必须含: 标题 + 3 个 bullet points.
+    deliverable:
+      path: out/draft.md
+      min_size: 100
+      # LLM-friendly checks: 接受 1. 2. 或 - * 任意 bullet 格式
+      checks:
+        - type: regex
+          pattern: "^[#\\-*]|^\d+\\."
+
+  - id: review
+    depends_on: [draft]
+    timeout: 120
+    workers:
+      - id: reviewer
+        cli: opencode
+        model: opencode/big-pickle
+        system_prompt: |
+          你是 senior editor. 基于 {input.draft} 改进文案.
+          输出改进版 (300 字, 含 1 个 emoji 标题 + 5 个 bullets).
+    deliverable:
+      path: out/final.md
+      min_size: 200
+      checks:
+        - type: regex
+          pattern: "^#"

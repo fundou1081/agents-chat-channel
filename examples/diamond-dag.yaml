@@ -1,0 +1,67 @@
+name: diamond-dag-e2e
+description: "菱形 DAG: research → [Chinese doc, English doc] → combined"
+stages:
+  - id: research
+    timeout: 120
+    workers:
+      - id: researcher
+        cli: opencode
+        model: opencode/big-pickle
+        system_prompt: |
+          你是调研员. 主题: 远程协作工具对比.
+          列出 4 个核心评估维度 (每点 1 行).
+    deliverable:
+      path: out/research.md
+      min_size: 50
+      checks:
+        - type: regex
+          pattern: "^[-*]"
+
+  - id: write-zh
+    depends_on: [research]
+    timeout: 120
+    workers:
+      - id: zh-writer
+        cli: opencode
+        model: opencode/big-pickle
+        system_prompt: |
+          你是中文 writer. 基于 research 写 200 字中文产品介绍.
+          必须含 ## 标题 + 3 个 bullet.
+    deliverable:
+      path: out/zh-doc.md
+      min_size: 150
+      checks:
+        - "##"
+
+  - id: write-en
+    depends_on: [research]
+    timeout: 120
+    workers:
+      - id: en-writer
+        cli: opencode
+        model: opencode/big-pickle
+        system_prompt: |
+          You are an English copywriter. Write a 100-word English product intro based on research.
+          Must include ## title and 3 bullets.
+    deliverable:
+      path: out/en-doc.md
+      min_size: 80
+      checks:
+        - "##"
+
+  - id: combine
+    depends_on: [write-zh, write-en]
+    timeout: 120
+    workers:
+      - id: combiner
+        cli: opencode
+        model: opencode/big-pickle
+        system_prompt: |
+          你是 editor. 把中文和英文文档合并成一个双语对比报告.
+          顶部 # 双语对比报告, 然后 ## 中文版 和 ## English Version 两个 section.
+    deliverable:
+      path: out/bilingual.md
+      min_size: 200
+      checks:
+        - "## 中文"
+        - "## English"

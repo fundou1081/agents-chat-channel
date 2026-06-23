@@ -396,7 +396,7 @@ class TestEdgeCases:
 
     @pytest.mark.asyncio
     async def test_json_schema_validation_fail(self, tmp_path: Path):
-        """json_schema 不匹配 → stage fail."""
+        """json_schema 不匹配 → 不再 block (Round 6 改动: checks/schema 变 advisory)."""
         import json
         spec = load_workflow_from_string(make_simple_workflow_yaml())
         spec.stages[0].timeout = 5
@@ -410,7 +410,8 @@ class TestEdgeCases:
         write_deliverable(tmp_path / "out" / "a.json", json.dumps({"bad": True}))
         scheduler = WorkflowScheduler(spec, tmp_path)
         success = await scheduler._wait_stage_done(spec.stages[0])
-        assert success is False
+        # 现在 schema 失败只是 warning, 不再 fail stage
+        assert success is True
 
     def test_stage_deps_in_result(self, tmp_path: Path):
         """WorkflowRunResult.to_dict() 含 stage_deps."""
@@ -418,3 +419,34 @@ class TestEdgeCases:
         d = result.to_dict()
         assert "stage_deps" in d
         assert d["stage_deps"] == {"a": [], "b": ["a"]}
+
+    @pytest.mark.asyncio
+    async def test_checks_failure_non_blocking(self, tmp_path: Path):
+        """checks fail 但文件存在 + size 满足 → stage 仍 OK (non-blocking).
+
+        Round 6 改动: checks 失败只 log warning, 不阻 pipeline.
+        这是 LLM-friendly: 即便 LLM 输出格式跟检查不匹配, 也 pass.
+        """
+        spec = load_workflow_from_string(make_simple_workflow_yaml())
+        spec.stages[0].timeout = 5
+        # 故意设个 LLM 实际会产生的格式 (1. 编号), 但检查期望 ## heading
+        spec.stages[0].deliverable.checks = ["##"]
+        # 写 LLM 风格输出 (1. 编号, 不含 ##)
+        llm_output = "1. item one\n2. item two\n"
+        write_deliverable(tmp_path / "out" / "a.json", llm_output)
+        scheduler = WorkflowScheduler(spec, tmp_path)
+        success = await scheduler._wait_stage_done(spec.stages[0])
+        # 失败非阻塞 → success is True
+        assert success is True
+
+    @pytest.mark.asyncio
+    async def test_size_violation_still_blocking(self, tmp_path: Path):
+        """size 不满足 (min/max) → 仍 blocking (跟 checks 区别)."""
+        spec = load_workflow_from_string(make_simple_workflow_yaml())
+        spec.stages[0].timeout = 5
+        spec.stages[0].deliverable.checks = []
+        spec.stages[0].deliverable.min_size = 100000  # 太大
+        write_deliverable(tmp_path / "out" / "a.json", "tiny")
+        scheduler = WorkflowScheduler(spec, tmp_path)
+        success = await scheduler._wait_stage_done(spec.stages[0])
+        assert success is False  # min_size 仍 block

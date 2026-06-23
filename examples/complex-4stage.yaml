@@ -1,0 +1,67 @@
+name: complex-e2e
+description: "4-stage chain with upstream references (LLM-friendly checks)"
+stages:
+  - id: research
+    timeout: 120
+    workers:
+      - id: researcher
+        cli: opencode
+        model: opencode/big-pickle
+        system_prompt: |
+          你是产品调研员. 给定主题, 列出 3 个关键卖点 (每点 1 行, 可用 1. 或 - 开头).
+          主题: 团队即时通讯工具.
+    deliverable:
+      path: out/research.md
+      min_size: 50
+      checks:
+        - type: regex
+          pattern: "^[#\\-*]|^\d+\\."
+
+  - id: outline
+    depends_on: [research]
+    timeout: 120
+    workers:
+      - id: outliner
+        cli: opencode
+        model: opencode/big-pickle
+        system_prompt: |
+          你是文案架构师. 基于 research 阶段的 3 个卖点, 设计文章大纲 (3 个 H2 section).
+    deliverable:
+      path: out/outline.md
+      min_size: 80
+      checks:
+        - type: regex
+          pattern: "^## "
+
+  - id: draft
+    depends_on: [outline]
+    timeout: 120
+    workers:
+      - id: writer
+        cli: opencode
+        model: opencode/big-pickle
+        system_prompt: |
+          你是 writer. 基于 outline 写完整文章 (400 字).
+          每 section 至少 100 字.
+    deliverable:
+      path: out/article.md
+      min_size: 300
+      checks:
+        - type: regex
+          pattern: "^## "
+
+  - id: polish
+    depends_on: [draft]
+    timeout: 120
+    workers:
+      - id: editor
+        cli: opencode
+        model: opencode/big-pickle
+        system_prompt: |
+          你是 editor. 改进 article, 加 1 个总结 section.
+    deliverable:
+      path: out/article-final.md
+      min_size: 350
+      checks:
+        - type: regex
+          pattern: "^## "

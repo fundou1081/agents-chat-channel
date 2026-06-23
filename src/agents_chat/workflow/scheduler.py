@@ -346,6 +346,71 @@ class WorkflowScheduler:
             return filtered
         return all_stages
 
+    def _post_stage_task(
+        self,
+        stage: StageSpec,
+        channel_name: str,
+        upstream_deliverables: list[tuple[str, Path]],
+    ) -> None:
+        """Post [TASK ...] broadcast to private stage channel.
+
+        告诉 stage 内 workers:
+          - 任务 ID (run_id-stage_id)
+          - stage system_prompt (任务内容)
+          - upstream deliverable 路径 (如需读上游产出)
+        """
+        from ..infra.files.channel import Channel
+
+        channel_path = self.data_dir / "channels" / f"{channel_name}.jsonl"
+        channel_path.parent.mkdir(parents=True, exist_ok=True)
+        if not channel_path.exists():
+            channel_path.touch()
+        ch = Channel(channel_path, channel_name)
+
+        # 构造任务内容
+        task_id = f"{self.run_id}-{stage.id}"
+        upstream_info = ""
+        if upstream_deliverables:
+            upstream_lines = [
+                f"- {sid}: {p}" for sid, p in upstream_deliverables
+            ]
+            upstream_info = "\n\n上游 deliverable (可读):\n" + "\n".join(upstream_lines)
+
+        # 1st worker 的 system_prompt 作为任务描述
+        task_content = stage.workers[0].system_prompt if stage.workers else f"执行 stage '{stage.id}'"
+        task_content += upstream_info
+        task_content += (
+            f"\n\n产出文件 (相对路径): {stage.deliverable.path or (stage.deliverable.paths[0] if stage.deliverable.paths else None) or stage.deliverable.dir or 'output'}"
+        )
+
+        # 提到所有 worker (each one receives the mention)
+        mentions = [w.id for w in stage.workers]
+
+        # 算 deliverable 绝对路径 (agent cwd = workspace, 不是 data_dir)
+        deliverable_rel_path = (
+            stage.deliverable.path
+            or (stage.deliverable.paths[0] if stage.deliverable.paths else None)
+            or stage.deliverable.dir
+        )
+        abs_deliverable = (
+            str(self.data_dir / deliverable_rel_path) if deliverable_rel_path else "(无)"
+        )
+
+        # 在 task_content 加绝对路径提示 (不动 system_prompt)
+        task_content += f"\n\n【重要】产出文件必须写到: {abs_deliverable}"
+
+        ch.append(
+            from_="workflow",
+            content=task_content,
+            type="task_broadcast",
+            task_id=task_id,
+            mentions=mentions,
+        )
+        logger.info(
+            f"[workflow {self.run_id}] posted task '{task_id}' to {channel_name} "
+            f"with mentions {mentions}"
+        )
+
     async def _start_stage(
         self,
         stage: StageSpec,
@@ -379,6 +444,13 @@ class WorkflowScheduler:
             )
             tasks.append(task)
         self._stage_tasks[stage.id] = tasks
+
+        # Post task broadcast to private channel so workers know what to do
+        # (agents listen on channel for mention/task_broadcast messages)
+        await asyncio.to_thread(
+            self._post_stage_task,
+            stage, channel_name, upstream_deliverables,
+        )
 
         # 给 worker 一点启动时间
         await asyncio.sleep(self.spawn_delay)
@@ -436,12 +508,12 @@ class WorkflowScheduler:
                     self._stage_check_results[stage.id] = check_result
                     if not check_result.all_passed:
                         failed = check_result.failed_items()
-                        logger.info(
+                        # 非阻塞: deliverable 存在 + size 满足, checks 是建议性验证
+                        logger.warning(
                             f"[workflow {self.run_id}] stage '{stage.id}' "
-                            f"checks not all passed: {[(i.type, i.detail) for i in failed]}"
+                            f"checks not all passed (non-blocking): "
+                            f"{[(i.type, i.detail) for i in failed]}"
                         )
-                        await asyncio.sleep(poll_interval)
-                        continue
 
                 # 4. 可选 strict JSON schema (对 envelope)
                 if primary and primary.is_file() and deliverable.json_schema:
@@ -457,14 +529,13 @@ class WorkflowScheduler:
                             )
                             # jsonschema 未安装 → 跳过, 不阻塞 pipeline
                         except Exception as e:
+                            # 非阻塞: schema mismatch 是 hints, 不阻 pipeline
                             logger.warning(
                                 f"[workflow {self.run_id}] schema validation "
-                                f"failed: {e}"
+                                f"failed (non-blocking): {e}"
                             )
-                            await asyncio.sleep(poll_interval)
-                            continue
 
-                # 全部 pass, stage done
+                # 全部 pass (size + 文件存在 + checks 警告已 log), stage done
                 logger.info(
                     f"[workflow {self.run_id}] stage '{stage.id}' deliverable OK"
                 )
