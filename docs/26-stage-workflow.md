@@ -858,53 +858,121 @@ async def _wait_stage_done(self, stage) -> bool:
 | **WebUI** | 🆕 +1 个视图 (DAG 状态图, stage 进度) |
 | **config.json** (worker 静态配置) | ⚠️ 优先用 YAML workflow; config.json 作为默认 fallback |
 
-### 9.2 新增端点 (FastAPI)
+### 9.2 REST API 端点 (FastAPI) — 当前实现
+
+**注**: Round 5 实现跟原设计有偏差, 增加了向后兼容的旧端点. 当前共存的端点:
+
+#### 设计文档 §9.2 端点 (推荐用)
 
 ```python
-# src/agents_chat/infra/server.py (新加 ~50 行)
-
-@app.get("/api/workflows")
-async def list_workflows() -> list[dict]:
-    """列出所有已注册的 workflow (从 .yaml 文件扫)."""
+# src/agents_chat/infra/server.py
 
 @app.get("/api/workflows/{name}")
 async def get_workflow(name: str) -> dict:
-    """读 YAML, 返 workflow spec + 当前状态."""
+    """读 workflow spec (含 stages / workers / deliverable).
+
+    向后兼容: 如果 {name} 是 run_id (runs/ 里存在), 返 run 数据.
+    """
 
 @app.post("/api/workflows/{name}/runs")
 async def start_workflow_run(name: str, body: dict = {}) -> dict:
-    """启新 run, 返 run_id + 初始状态."""
+    """启新 run by name (body: {from_stage?, single_stage?}).
+
+    body schema (RunByNameRequest):
+      from_stage: Optional[str]
+      single_stage: Optional[str]
+    """
 
 @app.get("/api/workflows/{name}/runs/{run_id}")
 async def get_workflow_run(name: str, run_id: str) -> dict:
-    """查 run 状态 (DAG 整体 + 每个 stage 状态 + deliverable 路径)."""
+    """查 run 状态.
+
+    校验: run.workflow_name 必须 == name (防止 leak 别人的 run).
+    """
 
 @app.post("/api/workflows/{name}/runs/{run_id}/cancel")
 async def cancel_workflow_run(name: str, run_id: str) -> dict:
-    """取消 run, kill 所有 worker, 清理临时 channel."""
+    """取消 run by name + run_id.
+
+    校验 name 匹配后, 通过 WorkflowRegistry 查 active scheduler 并 cancel.
+    """
 ```
 
-### 9.3 新增 CLI 命令
+#### 旧端点 (向后兼容)
+
+```python
+@app.get("/api/workflows")                  # 旧: 列 runs
+@app.get("/api/workflows/{run_id}")         # 旧: 查 run (不带 name)
+@app.get("/api/workflows/{run_id}/html")    # 旧: HTML 可视化
+@app.post("/api/workflows/run")             # 旧: 启新 run (body: yaml_path)
+@app.post("/api/workflows/{run_id}/cancel")  # 旧: 取消 (不带 name)
+```
+
+#### 额外端点 (功能扩展)
+
+```python
+@app.get("/api/workflows/active")           # 列 active runs
+@app.get("/api/workflows/registry")         # 列已注册 workflow YAML (扫盘)
+@app.post("/api/workflows/validate")        # 验证 YAML 语法 (不跑)
+```
+
+#### 端点 → 设计文档映射
+
+| 设计文档 | 当前实现 | 备注 |
+|----------|---------|------|
+| `GET /api/workflows` (列已注册) | `GET /api/workflows/registry` | 旧 endpoint 列 runs, 不一致 |
+| `GET /api/workflows/{name}` | ✅ `GET /api/workflows/{name}` | 含 backward compat |
+| `POST /api/workflows/{name}/runs` | ✅ `POST /api/workflows/{name}/runs` | body 含 from_stage/single_stage |
+| `GET /api/workflows/{name}/runs/{run_id}` | ✅ | 校验 name 匹配 |
+| `POST /api/workflows/{name}/runs/{run_id}/cancel` | ✅ | 通过 WorkflowRegistry
+
+### 9.3 CLI 命令 — 当前实现
+
+**注**: 跟设计文档略有差异. 当前支持的子命令:
+
+#### 跟设计文档对齐
 
 ```bash
-# 列出所有 workflow
-$ python -m agents_chat workflow list
+# 列出所有已注册 workflow (扫 examples/*.yaml)
+$ python -m agents_chat workflow list [--scan-dir DIR] [--data-dir DIR]
 
 # 跑 workflow
-$ python -m agents_chat workflow run pipeline.yaml
-
-# 跑指定 stage
-$ python -m agents_chat workflow run pipeline.yaml --stage=research
-
-# 从指定 stage 重跑
-$ python -m agents_chat workflow run pipeline.yaml --from-stage=write
+$ python -m agents_chat workflow run pipeline.yaml [--from-stage S] [--single-stage S]
 
 # 查 run 状态
-$ python -m agents_chat workflow status research-pipeline run-abc12345
+$ python -m agents_chat workflow status RUN_ID [--data-dir DIR]
+#   注: 设计文档期望 'workflow status research-pipeline run-abc12345'
+#   当前只支持 run_id. 设计文档用空格分隔, 实际是单 run_id 参数.
 
-# 取消 run
-$ python -m agents_chat workflow cancel research-pipeline run-abc12345
+# 取消 run (需 server 启)
+$ python -m agents_chat workflow cancel RUN_ID [--server-url URL]
+#   注: 设计文档期望 'workflow cancel research-pipeline run-abc12345'
+#   当前只支持 run_id (server 端 cancel).
 ```
+
+#### 额外功能
+
+```bash
+# 列所有 run 历史 (跟设计文档的 "list" 不同)
+$ python -m agents_chat workflow list-runs [--limit N] [--data-dir DIR]
+
+# 验证 YAML 语法
+$ python -m agents_chat workflow validate pipeline.yaml
+
+# 生成 DAG + stage 状态 HTML
+$ python -m agents_chat workflow visualize pipeline.yaml [--run-id ID] [-o FILE]
+
+# 列 server 上 active runs
+$ python -m agents_chat workflow active [--server-url URL]
+```
+
+#### 设计 vs 实现差异
+
+| 设计文档期望 | 当前实现 | 原因 |
+|-------------|---------|------|
+| `workflow run --stage=research` | `--single-stage research` | 命名差异, 等价功能 |
+| `workflow status name run_id` | `workflow status run_id` | 单参数更简单, run_id 唯一 |
+| `workflow cancel name run_id` | `workflow cancel run_id` | 同上 |
 
 ### 9.4 新增 WebUI 视图
 

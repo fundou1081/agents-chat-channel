@@ -30,7 +30,7 @@ from ..infra.cli.qwen import QwenCLI
 from ..infra.files.channel import Channel
 from ..infra.files.mailbox import Mailbox
 from ..infra.state_board import StateBoard
-from ..workflow.cli import register_workflow_parser, cmd_run, cmd_list_runs, cmd_status as wf_cmd_status, cmd_validate, cmd_visualize
+from ..workflow.cli import register_workflow_parser, cmd_run, cmd_list_runs, cmd_list, cmd_status as wf_cmd_status, cmd_validate, cmd_visualize, cmd_cancel, cmd_active
 
 
 # =============================================================================
@@ -280,6 +280,8 @@ def main(argv: list[str] | None = None):
         cmd_cancel(args)
     elif args.cmd == "workflow-active":
         cmd_active(args)
+    elif args.cmd == "workflow-list":
+        cmd_list(args)
 
 
 if __name__ == "__main__":

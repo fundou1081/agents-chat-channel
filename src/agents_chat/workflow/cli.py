@@ -86,6 +86,54 @@ def cmd_run(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_list(args: argparse.Namespace) -> None:
+    """列已注册的 workflow (扫盘 YAML, 跟设计文档 §9.3 对齐).
+
+    类似 list-runs, 但列 workflow, 不是 runs.
+    """
+    from ..workflow.loader import load_workflow
+
+    scan_path = Path(args.scan_dir)
+    if not scan_path.is_absolute():
+        # 默认相对 data_dir 的父目录
+        data_dir = Path(args.data_dir).resolve()
+        scan_path = data_dir.parent / scan_path
+    if not scan_path.is_dir():
+        print(f"❌ directory not found: {scan_path}", file=sys.stderr)
+        sys.exit(1)
+
+    found = []
+    for yaml_file in sorted(scan_path.rglob("*.yaml")) + sorted(scan_path.rglob("*.yml")):
+        if any(part in yaml_file.parts for part in ("node_modules", ".git", "__pycache__")):
+            continue
+        try:
+            spec = load_workflow(yaml_file)
+            stages = spec.topological_order()
+            found.append({
+                "yaml": str(yaml_file.relative_to(scan_path)),
+                "name": spec.name,
+                "stages": len(stages),
+                "stage_ids": [s.id for s in stages],
+            })
+        except (ValueError, FileNotFoundError) as e:
+            found.append({
+                "yaml": str(yaml_file.relative_to(scan_path)),
+                "error": str(e),
+            })
+
+    if not found:
+        print(f"(no workflows found in {scan_path})")
+        return
+
+    print(f"Workflows ({len(found)}):")
+    for f in found:
+        if "error" in f:
+            print(f"  ⚠️  {f['yaml']}: {f['error']}")
+        else:
+            stages_str = ", ".join(f["stage_ids"])
+            print(f"  📋 {f['name']}  ({f['stages']} stages: {stages_str})  [{f['yaml']}]")
+
+
 def cmd_list_runs(args: argparse.Namespace) -> None:
     """列最近 workflow runs."""
     data_dir = Path(args.data_dir).resolve()
@@ -306,3 +354,9 @@ def register_workflow_parser(subparsers: argparse._SubParsersAction) -> None:
     p_active = wf_sub.add_parser("active", help="列 server 上 active workflows")
     p_active.add_argument("--server-url", default=os.environ.get("AGENTS_CHAT_SERVER_URL", "http://127.0.0.1:8765"), help="Server URL")
     p_active.set_defaults(cmd="workflow-active")
+
+    # ---- workflow list ----
+    p_list_wf = wf_sub.add_parser("list", help="列已注册的 workflow (扫盘 YAML, 跟设计文档 §9.3 对齐)")
+    p_list_wf.add_argument("--scan-dir", default="examples", help="扫的目录 (相对 data_dir 的父目录)")
+    p_list_wf.add_argument("--data-dir", default=os.environ.get("AGENTS_CHAT_DATA_DIR", "./data_v2"))
+    p_list_wf.set_defaults(cmd="workflow-list")

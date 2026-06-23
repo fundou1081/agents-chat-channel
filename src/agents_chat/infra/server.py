@@ -95,6 +95,11 @@ class RunWorkflowRequest(BaseModel):
     single_stage: Optional[str] = None
 
 
+class RunByNameRequest(BaseModel):
+    from_stage: Optional[str] = None
+    single_stage: Optional[str] = None
+
+
 def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> FastAPI:
     """构造 FastAPI app."""
 
@@ -852,6 +857,140 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
     # Workflow API (Stage-Isolated)
     # -------------------------------------------------------------------------
 
+    # =================================================================
+    # 设计文档 §9.2 对齐端点 (RESTful path: /workflows/{name}/runs/{id})
+    # 这些跟老端点共存, 互不破坏
+    # =================================================================
+
+    def _find_yaml_by_name(workflow_name: str) -> Optional[Path]:
+        """扫 examples/ 找 workflow.name == workflow_name 的 yaml.
+
+        返回:
+          - 找到 valid yaml 返路径
+          - 找到但 invalid 抛 HTTPException(400)
+          - 找不到返 None (404)
+        """
+        from ..workflow.loader import load_workflow
+        examples_dir = data_dir.parent / "examples"
+        if not examples_dir.is_dir():
+            return None
+        # 第一轮: 找名字匹配的 yaml (只 match 名字, 不验证 schema)
+        # 第二轮: 验证 schema
+        candidate = None
+        for yaml_file in examples_dir.rglob("*.yaml"):
+            if any(p in yaml_file.parts for p in ("node_modules", ".git", "__pycache__")):
+                continue
+            try:
+                # 先简单看 name 字段 (避免重 load 全部)
+                import yaml
+                raw = yaml.safe_load(yaml_file.read_text())
+                if isinstance(raw, dict) and raw.get("name") == workflow_name:
+                    candidate = yaml_file
+                    break
+            except Exception:
+                continue
+        if not candidate:
+            return None
+        # 找到名字匹配的, 现在 validate (会抛 ValueError on schema 错)
+        try:
+            load_workflow(candidate)
+            return candidate
+        except (ValueError, FileNotFoundError) as e:
+            # 把异常上抛, 让 endpoint 转 400
+            raise HTTPException(status_code=400, detail=f"invalid workflow: {e}")
+
+
+    @app.post("/api/workflows/{name}/runs")
+    async def run_workflow_by_name(
+        name: str,
+        req: RunByNameRequest,
+        background_tasks: BackgroundTasks,
+    ):
+        """启新 workflow run by name (设计 doc §9.2)."""
+        from ..workflow.loader import load_workflow
+        from ..workflow.scheduler import WorkflowScheduler
+
+        yaml_path = _find_yaml_by_name(name)
+        if not yaml_path:
+            raise HTTPException(
+                status_code=404,
+                detail=f"workflow '{name}' not found in examples/",
+            )
+        try:
+            spec = load_workflow(yaml_path)
+        except (ValueError, FileNotFoundError) as e:
+            raise HTTPException(status_code=400, detail=f"invalid workflow: {e}")
+
+        scheduler = WorkflowScheduler(
+            spec,
+            data_dir=data_dir,
+            from_stage=req.from_stage,
+            single_stage=req.single_stage,
+        )
+        from ..workflow.registry import WorkflowRegistry
+        WorkflowRegistry.get_default().register(scheduler)
+        background_tasks.add_task(_run_workflow_background, scheduler)
+        return {
+            "run_id": scheduler.run_id,
+            "workflow": spec.name,
+            "stages": len(spec.stages),
+            "from_stage": req.from_stage,
+            "single_stage": req.single_stage,
+        }
+
+    @app.get("/api/workflows/{name}/runs/{run_id}")
+    def get_run_by_name(name: str, run_id: str):
+        """查 run 状态 (设计 doc §9.2).
+
+        路径含 name 是为了校验: 跟 /runs/{run_id} 不同, name 是 path
+        一部分而不是 run_id. 404 if name != run_state.workflow_name.
+        """
+        run_file = data_dir / "runs" / f"{run_id}.json"
+        if not run_file.exists():
+            raise HTTPException(
+                status_code=404, detail=f"run '{run_id}' not found"
+            )
+        try:
+            data = json.loads(run_file.read_text("utf-8"))
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=500, detail=f"invalid run file: {e}")
+        # 校验 name 匹配 (防止误用别的 workflow name 查别人的 run)
+        if data.get("workflow_name") != name:
+            raise HTTPException(
+                status_code=404,
+                detail=f"run '{run_id}' does not belong to workflow '{name}'",
+            )
+        return data
+
+    @app.post("/api/workflows/{name}/runs/{run_id}/cancel")
+    def cancel_run_by_name(name: str, run_id: str):
+        """取消 run (设计 doc §9.2)."""
+        from ..workflow.registry import WorkflowRegistry
+        registry = WorkflowRegistry.get_default()
+        scheduler = registry.get(run_id)
+        if not scheduler:
+            raise HTTPException(
+                status_code=404,
+                detail=f"run '{run_id}' not in active registry (可能已完成)",
+            )
+        # 校验 name 匹配
+        if scheduler.workflow.name != name:
+            raise HTTPException(
+                status_code=404,
+                detail=f"run '{run_id}' does not belong to workflow '{name}'",
+            )
+        scheduler.cancel()
+        return {
+            "run_id": run_id,
+            "workflow": name,
+            "status": "canceled",
+            "message": "cancel signal sent",
+        }
+
+    # =================================================================
+    # 老的端点 (保持向后兼容, 跟设计 doc 略有差异)
+    # =================================================================
+
     @app.get("/api/workflows")
     def list_workflow_runs(limit: int = Query(20, ge=1, le=100)):
         """列所有 workflow runs (最近 N 条)."""
@@ -874,6 +1013,7 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
 
     # 注意: 这个端点必须在 /api/workflows/{run_id} 之前定义
     # (FastAPI 按定义顺序匹配, "active" 会被 catch-all 吃掉)
+
     @app.get("/api/workflows/active")
     def list_active_workflows():
         """列所有 active (running) workflow run IDs."""
@@ -881,14 +1021,12 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
         registry = WorkflowRegistry.get_default()
         return {"active": registry.list_active()}
 
-    @app.get("/api/workflows/registry")
-    def list_registered_workflows(scan_dir: str = "examples"):
-        """列已注册的 workflow YAML (扫盘).
 
-        Args:
-            scan_dir: 相对 data_dir 的目录 (default 'examples').
-                      也可传绝对路径.
-        """
+    @app.get("/api/workflows/registry")
+    def list_registered_workflows(
+        scan_dir: str = "examples",
+    ):
+        """列已注册的 workflow YAML (扫盘)."""
         from ..workflow.loader import load_workflow
 
         scan_path = Path(scan_dir)
@@ -920,6 +1058,59 @@ def create_app(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> Fas
                     "error": str(e),
                 })
         return {"yaml_files": result, "scan_dir": str(scan_path)}
+
+    @app.get("/api/workflows/{name}")
+    def get_workflow_spec(name: str):
+        """读 workflow spec (设计 doc §9.2).
+
+        向后兼容: 如果 {name} 看起来像 run_id (runs/ 里存在对应文件),
+        返 run 数据 (跟老的 GET /api/workflows/{run_id} 一样).
+        否则按 workflow name 找 yaml.
+        """
+        # Backward compat: 先查 run_id
+        run_file = data_dir / "runs" / f"{name}.json"
+        if run_file.exists():
+            try:
+                return json.loads(run_file.read_text("utf-8"))
+            except json.JSONDecodeError as e:
+                raise HTTPException(status_code=500, detail=f"invalid run file: {e}")
+
+        # 按 workflow name 找 yaml
+        yaml_path = _find_yaml_by_name(name)
+        if not yaml_path:
+            raise HTTPException(
+                status_code=404,
+                detail=f"workflow '{name}' not found and no run with id '{name}' exists",
+            )
+        try:
+            from ..workflow.loader import load_workflow
+            spec = load_workflow(yaml_path)
+        except (ValueError, FileNotFoundError) as e:
+            raise HTTPException(status_code=400, detail=f"invalid workflow: {e}")
+        stages = spec.topological_order()
+        return {
+            "name": spec.name,
+            "description": spec.description,
+            "version": spec.version,
+            "yaml_path": str(yaml_path.relative_to(data_dir.parent)),
+            "stages": [
+                {
+                    "id": s.id,
+                    "workers": [w.id for w in s.workers],
+                    "depends_on": s.depends_on,
+                    "timeout": s.timeout,
+                    "deliverable": {
+                        "path": s.deliverable.path,
+                        "paths": s.deliverable.paths,
+                        "dir": s.deliverable.dir,
+                        "min_size": s.deliverable.min_size,
+                        "max_size": s.deliverable.max_size,
+                        "checks": s.deliverable.checks,
+                    },
+                }
+                for s in stages
+            ],
+        }
 
     @app.get("/api/workflows/{run_id}")
     def get_workflow_run(run_id: str):
